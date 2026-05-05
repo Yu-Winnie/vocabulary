@@ -40,6 +40,40 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
 
+    // =========================================================================
+    // 🚀 老師專屬：Firebase 雲端資料庫設定區
+    // =========================================================================
+    // 若要發布到 GitHub Pages 讓全班即時同步，請填入您自己的免費 Firebase 設定。
+    // (如果保持 null，網頁在 GitHub 上會自動降級為「瀏覽器本地暫存模式」)
+    const USER_FIREBASE_CONFIG = // Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyBvVtaIL-4FhgIJX34dUcvVXFiu50AWNNw",
+  authDomain: "vocabulary-89032.firebaseapp.com",
+  projectId: "vocabulary-89032",
+  storageBucket: "vocabulary-89032.firebasestorage.app",
+  messagingSenderId: "745901975039",
+  appId: "1:745901975039:web:3b90101278d2433550f3ca"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);; 
+    /* 請將 null 替換為您的專屬設定，例如：
+    const USER_FIREBASE_CONFIG = {
+      apiKey: "AIzaSy...",
+      authDomain: "your-project.firebaseapp.com",
+      projectId: "your-project",
+      storageBucket: "your-project.appspot.com",
+      messagingSenderId: "123456789",
+      appId: "1:123456789:web:abcdef"
+    };
+    */
+    // =========================================================================
+
     // --- 預設單字庫 (當雲端沒資料時的預設值) ---
     const DEFAULT_VOCAB_DATA = {
       "U1": [
@@ -93,6 +127,18 @@
       const [allVocabData, setAllVocabData] = useState(null); // null 表示載入中
       const [isSaving, setIsSaving] = useState(false);
 
+      // --- 共用：取得正確的資料庫路徑 ---
+      const getDatabaseRef = (api, db) => {
+        if (USER_FIREBASE_CONFIG) {
+          // 若老師有提供自己的 Firebase，存在根目錄的 vocabulary/dictionary
+          return api.doc(db, 'vocabulary', 'dictionary');
+        } else {
+          // AI 開發環境專用路徑
+          const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+          return api.doc(db, 'artifacts', appId, 'public', 'data', 'vocabulary', 'dictionary');
+        }
+      };
+
       // --- 1. 動態載入 Firebase 模組 ---
       useEffect(() => {
         const loadFirebase = async () => {
@@ -120,10 +166,12 @@
         const initAuth = async () => {
           try {
             const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
-            const config = JSON.parse(configStr);
+            const canvasConfig = JSON.parse(configStr);
+            // 優先使用老師自己填寫的設定，否則使用系統預設
+            const config = USER_FIREBASE_CONFIG || canvasConfig;
             
-            if (Object.keys(config).length === 0) {
-              // 找不到設定檔，降級使用本地端資料
+            if (!config || Object.keys(config).length === 0) {
+              // 找不到設定檔 (在 GitHub Pages 且未填寫設定)，降級使用本地端資料
               setAllVocabData(DEFAULT_VOCAB_DATA);
               return;
             }
@@ -132,10 +180,16 @@
             const auth = fbAPI.getAuth(app);
             window.db = fbAPI.getFirestore(app);
 
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-              await fbAPI.signInWithCustomToken(auth, __initial_auth_token);
-            } else {
+            if (USER_FIREBASE_CONFIG) {
+              // 自訂 Firebase：使用匿名登入
               await fbAPI.signInAnonymously(auth);
+            } else {
+              // 系統 Firebase：使用自訂 Token
+              if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await fbAPI.signInWithCustomToken(auth, __initial_auth_token);
+              } else {
+                await fbAPI.signInAnonymously(auth);
+              }
             }
 
             fbAPI.onAuthStateChanged(auth, setUser);
@@ -151,8 +205,7 @@
       useEffect(() => {
         if (!user || !window.db || !fbAPI) return;
 
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const docRef = fbAPI.doc(window.db, 'artifacts', appId, 'public', 'data', 'vocabulary', 'dictionary');
+        const docRef = getDatabaseRef(fbAPI, window.db);
 
         const unsubscribe = fbAPI.onSnapshot(docRef, (snapshot) => {
           if (snapshot.exists()) {
@@ -174,20 +227,20 @@
       const saveVocabList = async (newData) => {
         setIsSaving(true);
         try {
-          if (window.db && fbAPI) {
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const docRef = fbAPI.doc(window.db, 'artifacts', appId, 'public', 'data', 'vocabulary', 'dictionary');
+          // 檢查是否成功連上資料庫 (有自己的設定，或在預覽環境中)
+          if (window.db && fbAPI && (USER_FIREBASE_CONFIG || typeof __firebase_config !== 'undefined')) {
+            const docRef = getDatabaseRef(fbAPI, window.db);
             await fbAPI.setDoc(docRef, newData);
             alert("✅ 資料已成功儲存至雲端，學生畫面將自動同步更新！");
           } else {
             // 本地測試模式降級
             setAllVocabData(newData);
-            alert("⚠️ 目前為本地測試模式，資料僅儲存於您的瀏覽器。");
+            alert("⚠️ 目前為本地測試模式，資料僅儲存於您的瀏覽器。\n\n若要發布至 GitHub Pages 讓學生雲端同步，請參考程式碼最上方的 USER_FIREBASE_CONFIG 設定教學！");
           }
           setCurrentView('home');
         } catch (e) {
           console.error('儲存失敗', e);
-          alert("❌ 儲存失敗，請確認網路狀態。");
+          alert("❌ 儲存失敗，請確認網路與權限狀態。");
         } finally {
           setIsSaving(false);
         }
@@ -450,7 +503,7 @@
       );
     }
 
-    // --- 視圖: 教師編輯區 (已移除繁瑣的 GitHub 匯出，改為直接儲存雲端) ---
+    // --- 視圖: 教師編輯區 ---
     function TeacherEditView({ allVocabData, onSave, isSaving, onCancel }) {
       const [editUnit, setEditUnit] = useState('U1');
       const [inputText, setInputText] = useState("");

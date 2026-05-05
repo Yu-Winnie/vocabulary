@@ -11,6 +11,12 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <!-- 引入 Babel 用於在瀏覽器中編譯 JSX -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- 🟢 引入 Firebase 傳統版 (Compat)，徹底解決模組載入導致的「空白網頁」問題 -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
   <style>
     /* 針對列印的樣式優化 */
     @media print {
@@ -43,8 +49,7 @@
     // =========================================================================
     // 🚀 老師專屬：Firebase 雲端資料庫設定區
     // =========================================================================
-    // 若要發布到 GitHub Pages 讓全班即時同步，請填入您自己的免費 Firebase 設定。
-    // (如果保持 null，網頁在 GitHub 上會自動降級為「瀏覽器本地暫存模式」)
+    // 您的專屬設定碼已為您填妥
     const USER_FIREBASE_CONFIG = {
       apiKey: "AIzaSyBvVtaIL-4FhgIJX34dUcvVXFiu50AWNNw",
       authDomain: "vocabulary-89032.firebaseapp.com",
@@ -103,97 +108,57 @@
       const [isTeacherAuthenticated, setIsTeacherAuthenticated] = useState(false);
       
       // Firebase 相關狀態
-      const [fbAPI, setFbAPI] = useState(null);
       const [user, setUser] = useState(null);
       const [allVocabData, setAllVocabData] = useState(null); // null 表示載入中
       const [isSaving, setIsSaving] = useState(false);
 
-      // --- 共用：取得正確的資料庫路徑 ---
-      const getDatabaseRef = (api, db) => {
-        if (USER_FIREBASE_CONFIG) {
-          // 若老師有提供自己的 Firebase，存在根目錄的 vocabulary/dictionary
-          return api.doc(db, 'vocabulary', 'dictionary');
-        } else {
-          // AI 開發環境專用路徑
-          const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-          return api.doc(db, 'artifacts', appId, 'public', 'data', 'vocabulary', 'dictionary');
-        }
-      };
-
-      // --- 1. 動態載入 Firebase 模組 ---
+      // --- 1. 傳統方式初始化 Firebase ---
       useEffect(() => {
-        const loadFirebase = async () => {
+        const initFirebase = async () => {
           try {
-            // 修正 Babel 編譯問題：使用 native 原生載入來避免 import() 被轉譯成 require()
-            const nativeImport = new Function('url', 'return import(url)');
-            const [appMod, authMod, fsMod] = await Promise.all([
-              nativeImport('https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js'),
-              nativeImport('https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js'),
-              nativeImport('https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js')
-            ]);
-            setFbAPI({ ...appMod, ...authMod, ...fsMod });
-          } catch (err) {
-            console.error("無法載入 Firebase 模組", err);
-            setAllVocabData(DEFAULT_VOCAB_DATA); // 載入失敗時降級使用本地資料
-          }
-        };
-        loadFirebase();
-      }, []);
-
-      // --- 2. 初始化 Firebase Auth ---
-      useEffect(() => {
-        if (!fbAPI) return;
-        
-        const initAuth = async () => {
-          try {
-            const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
-            const canvasConfig = JSON.parse(configStr);
-            // 優先使用老師自己填寫的設定，否則使用系統預設
-            const config = USER_FIREBASE_CONFIG || canvasConfig;
-            
-            if (!config || Object.keys(config).length === 0) {
-              // 找不到設定檔 (在 GitHub Pages 且未填寫設定)，降級使用本地端資料
+            // 檢查 Firebase 是否成功載入（若被擋廣告軟體阻擋，自動降級）
+            if (typeof firebase === 'undefined') {
+              console.warn("無法載入 Firebase 核心套件，降級為本地模式。");
               setAllVocabData(DEFAULT_VOCAB_DATA);
               return;
             }
 
-            const app = fbAPI.initializeApp(config);
-            const auth = fbAPI.getAuth(app);
-            window.db = fbAPI.getFirestore(app);
-
-            if (USER_FIREBASE_CONFIG) {
-              // 自訂 Firebase：使用匿名登入
-              await fbAPI.signInAnonymously(auth);
-            } else {
-              // 系統 Firebase：使用自訂 Token
-              if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await fbAPI.signInWithCustomToken(auth, __initial_auth_token);
-              } else {
-                await fbAPI.signInAnonymously(auth);
-              }
+            // 避免重複初始化
+            if (!firebase.apps.length) {
+              firebase.initializeApp(USER_FIREBASE_CONFIG);
             }
+            
+            const auth = firebase.auth();
+            window.db = firebase.firestore();
 
-            fbAPI.onAuthStateChanged(auth, setUser);
+            // 匿名登入
+            await auth.signInAnonymously();
+            
+            auth.onAuthStateChanged((u) => {
+              setUser(u);
+            });
           } catch (err) {
-            console.error("驗證失敗:", err);
+            console.error("驗證或初始化失敗:", err);
+            // 發生錯誤也確保網頁不會空白
             setAllVocabData(DEFAULT_VOCAB_DATA);
           }
         };
-        initAuth();
-      }, [fbAPI]);
+        initFirebase();
+      }, []);
 
-      // --- 3. 監聽 Firestore 即時資料 ---
+      // --- 2. 監聽 Firestore 即時資料 ---
       useEffect(() => {
-        if (!user || !window.db || !fbAPI) return;
+        if (!user || !window.db) return;
 
-        const docRef = getDatabaseRef(fbAPI, window.db);
+        // 連接到您的資料庫路徑
+        const docRef = window.db.collection('vocabulary').doc('dictionary');
 
-        const unsubscribe = fbAPI.onSnapshot(docRef, (snapshot) => {
-          if (snapshot.exists()) {
+        const unsubscribe = docRef.onSnapshot((snapshot) => {
+          if (snapshot.exists) {
             setAllVocabData(snapshot.data());
           } else {
             // 資料庫是空的，自動寫入預設資料
-            fbAPI.setDoc(docRef, DEFAULT_VOCAB_DATA);
+            docRef.set(DEFAULT_VOCAB_DATA);
             setAllVocabData(DEFAULT_VOCAB_DATA);
           }
         }, (error) => {
@@ -202,26 +167,25 @@
         });
 
         return () => unsubscribe();
-      }, [user, fbAPI]);
+      }, [user]);
 
       // --- 儲存資料至雲端 ---
       const saveVocabList = async (newData) => {
         setIsSaving(true);
         try {
-          // 檢查是否成功連上資料庫 (有自己的設定，或在預覽環境中)
-          if (window.db && fbAPI && (USER_FIREBASE_CONFIG || typeof __firebase_config !== 'undefined')) {
-            const docRef = getDatabaseRef(fbAPI, window.db);
-            await fbAPI.setDoc(docRef, newData);
+          if (window.db) {
+            const docRef = window.db.collection('vocabulary').doc('dictionary');
+            await docRef.set(newData);
             alert("✅ 資料已成功儲存至雲端，學生畫面將自動同步更新！");
           } else {
             // 本地測試模式降級
             setAllVocabData(newData);
-            alert("⚠️ 目前為本地測試模式，資料僅儲存於您的瀏覽器。\n\n若要發布至 GitHub Pages 讓學生雲端同步，請參考程式碼最上方的 USER_FIREBASE_CONFIG 設定教學！");
+            alert("⚠️ 目前無法連線雲端，資料僅暫存於您的瀏覽器。");
           }
           setCurrentView('home');
         } catch (e) {
           console.error('儲存失敗', e);
-          alert("❌ 儲存失敗，請確認網路與權限狀態。");
+          alert("❌ 儲存失敗！請確認 Firebase 的「Authentication -> 匿名登入」已啟用，且「Firestore -> 規則 (Rules)」已設為測試模式！");
         } finally {
           setIsSaving(false);
         }
@@ -305,7 +269,8 @@
         return (
           <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center">
              <div className="loader mb-4"></div>
-             <p className="text-xl font-bold text-indigo-600">正在連接雲端資料庫...</p>
+             <p className="text-xl font-bold text-indigo-600 mt-4">正在連接雲端資料庫...</p>
+             <p className="text-slate-500 mt-2 text-sm">如果一直停留在這，請重新整理網頁</p>
           </div>
         );
       }

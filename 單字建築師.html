@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>英文建築師</title>
+  <!-- 引入 Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 引入 React 與 ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- 引入 Babel 用於在瀏覽器中編譯 JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    /* 針對列印的樣式優化 */
+    @media print {
+      .print\:hidden { display: none !important; }
+      body { background: white !important; }
+      .shadow-lg, .shadow-xl { box-shadow: none !important; border: 1px solid #e2e8f0; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    // --- 預設單字庫 (支援 U1~U6 與分類) ---
+    const DEFAULT_VOCAB_DATA = {
+      U1: [
+        { id: 1, category: "主題單字", word: "architect", meaning: "建築師", image: "", audio: "" },
+        { id: 2, category: "主題單字", word: "vocabulary", meaning: "字彙", image: "", audio: "" },
+        { id: 3, category: "對話單字", word: "interactive", meaning: "互動的", image: "", audio: "" },
+        { id: 4, category: "對話單字", word: "education", meaning: "教育", image: "", audio: "" },
+        { id: 5, category: "閱讀單字", word: "student", meaning: "學生", image: "", audio: "" },
+        { id: 6, category: "閱讀單字", word: "computer", meaning: "電腦", image: "", audio: "" }
+      ],
+      U2: [], U3: [], U4: [], U5: [], U6: []
+    };
+
+    // --- 共用工具函式 ---
+    const playAudio = (text, customAudioUrl = null, rate = 0.9) => {
+      if (customAudioUrl) {
+        const audio = new Audio(customAudioUrl);
+        audio.playbackRate = rate;
+        audio.play().catch(e => console.error('音檔播放失敗，可能網址無效', e));
+      } else if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'en-US';
+        utterance.rate = rate;
+        window.speechSynthesis.speak(utterance);
+      }
+    };
+
+    const shuffleArray = (array) => {
+      const newArr = [...array];
+      for (let i = newArr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
+      }
+      return newArr;
+    };
+
+    // --- 主應用程式元件 ---
+    function App() {
+      const [currentView, setCurrentView] = useState('home');
+      const [studentName, setStudentName] = useState('');
+      
+      // 全局資料狀態：存儲 U1~U6 的所有單字
+      const [allVocabData, setAllVocabData] = useState(() => {
+        try {
+          const saved = localStorage.getItem('vocabArchitectMultiUnit');
+          if (saved) return JSON.parse(saved);
+        } catch (e) { console.error('無法讀取本地資料'); }
+        return DEFAULT_VOCAB_DATA;
+      });
+
+      // 學生選擇的單元、分類與題號範圍
+      const [selectedUnit, setSelectedUnit] = useState('U1');
+      const [selectedCategory, setSelectedCategory] = useState('全部單字');
+      const [selectedRange, setSelectedRange] = useState('全部');
+
+      // 根據選擇過濾出目前要測驗的單字清單
+      const activeVocabList = useMemo(() => {
+        const list = allVocabData[selectedUnit] || [];
+        
+        // 1. 先依分類過濾
+        let filtered = list;
+        if (selectedCategory !== '全部單字') {
+          filtered = list.filter(v => v.category === selectedCategory);
+        }
+
+        // 2. 再依題號範圍過濾
+        if (selectedRange !== '全部') {
+          const parts = selectedRange.split('-');
+          if (parts.length === 2) {
+            const start = parseInt(parts[0], 10) - 1; // 陣列索引從 0 開始
+            const end = parseInt(parts[1], 10);
+            filtered = filtered.slice(start, end);
+          }
+        }
+
+        return filtered;
+      }, [allVocabData, selectedUnit, selectedCategory, selectedRange]);
+
+      const [trackingData, setTrackingData] = useState({
+        t1Completed: false,
+        t2TrafficLights: {},
+        t3CompletedLevels: [],
+        usedForcePass: false
+      });
+
+      const saveVocabList = (newData) => {
+        setAllVocabData(newData);
+        try {
+          localStorage.setItem('vocabArchitectMultiUnit', JSON.stringify(newData));
+        } catch (e) { console.error('無法儲存本地資料'); }
+      };
+
+      const updateTracking = (key, value) => {
+        setTrackingData(prev => ({ ...prev, [key]: value }));
+      };
+
+      const handleStart = (name) => {
+        setStudentName(name);
+        // 每次開始新任務時重置追蹤進度
+        setTrackingData({
+          t1Completed: false,
+          t2TrafficLights: {},
+          t3CompletedLevels: [],
+          usedForcePass: false
+        });
+        setCurrentView('t1');
+      };
+
+      const renderView = () => {
+        switch (currentView) {
+          case 'home':
+            return <HomeView 
+                      onStart={handleStart} 
+                      onEdit={() => setCurrentView('teacher')} 
+                      activeVocabList={activeVocabList} 
+                      initialName={studentName}
+                      selectedUnit={selectedUnit}
+                      setSelectedUnit={setSelectedUnit}
+                      selectedCategory={selectedCategory}
+                      setSelectedCategory={setSelectedCategory}
+                      selectedRange={selectedRange}
+                      setSelectedRange={setSelectedRange}
+                   />;
+          case 'teacher':
+            return <TeacherEditView 
+                      allVocabData={allVocabData} 
+                      onSave={(newData) => { saveVocabList(newData); setCurrentView('home'); }} 
+                      onCancel={() => setCurrentView('home')} 
+                   />;
+          case 't1':
+            return <Task1Flashcards vocabList={activeVocabList} onComplete={() => { updateTracking('t1Completed', true); setCurrentView('t2'); }} />;
+          case 't2':
+            return <Task2TrafficLight vocabList={activeVocabList} initialData={trackingData.t2TrafficLights} onComplete={(data) => { updateTracking('t2TrafficLights', data); setCurrentView('t3'); }} />;
+          case 't3':
+            return <Task3PingPong 
+                      vocabList={activeVocabList} 
+                      completedLevels={trackingData.t3CompletedLevels}
+                      onLevelComplete={(levelId, usedForce) => {
+                        const newLevels = trackingData.t3CompletedLevels.includes(levelId) 
+                          ? trackingData.t3CompletedLevels 
+                          : [...trackingData.t3CompletedLevels, levelId];
+                        updateTracking('t3CompletedLevels', newLevels);
+                        if(usedForce) updateTracking('usedForcePass', true);
+                      }}
+                      onCompleteAll={() => setCurrentView('t4')} 
+                    />;
+          case 't4':
+            return <Task4Export 
+                      vocabList={activeVocabList} 
+                      studentName={studentName} 
+                      trackingData={trackingData} 
+                      setCurrentView={setCurrentView}
+                      selectedUnit={selectedUnit}
+                      selectedCategory={selectedCategory}
+                      selectedRange={selectedRange}
+                   />;
+          default:
+            return <HomeView onStart={handleStart} onEdit={() => setCurrentView('teacher')} activeVocabList={activeVocabList} initialName={studentName} selectedUnit={selectedUnit} setSelectedUnit={setSelectedUnit} selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory} selectedRange={selectedRange} setSelectedRange={setSelectedRange} />;
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-50 font-sans text-slate-800 selection:bg-blue-200 flex flex-col">
+          <nav className="bg-indigo-600 text-white p-4 shadow-md print:hidden shrink-0">
+            <div className="max-w-6xl mx-auto flex justify-between items-center">
+              <h1 className="text-xl font-bold flex items-center gap-2 cursor-pointer" onClick={() => setCurrentView('home')}>
+                <span className="text-2xl">🏛️</span> 英文建築師
+              </h1>
+              <div className="flex items-center gap-4 text-sm">
+                {currentView !== 'teacher' && (
+                  <button onClick={() => setCurrentView('teacher')} className="bg-indigo-500 hover:bg-indigo-400 px-3 py-1 rounded text-xs transition-colors shadow-sm">
+                    ✏️ 老師編輯區
+                  </button>
+                )}
+                {currentView !== 'home' && currentView !== 'teacher' && (
+                  <div className="hidden md:block text-indigo-200 font-medium">
+                    {selectedUnit} - {selectedCategory} ({selectedRange})
+                  </div>
+                )}
+                <div className="bg-indigo-700 px-3 py-1 rounded-full">{studentName ? `學生: ${studentName}` : '未登入'}</div>
+              </div>
+            </div>
+          </nav>
+          
+          <div className="max-w-6xl mx-auto w-full p-4 md:p-6 mt-2 flex flex-col md:flex-row gap-6 flex-1">
+            {currentView !== 'teacher' && (
+              <Sidebar 
+                currentView={currentView} 
+                setCurrentView={setCurrentView} 
+                trackingData={trackingData} 
+                vocabCount={activeVocabList.length}
+                studentName={studentName}
+              />
+            )}
+            
+            <main className={`flex-1 min-w-0 ${currentView === 'teacher' ? 'max-w-4xl mx-auto w-full' : ''}`}>
+              {renderView()}
+            </main>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 左側功能欄元件 (Sidebar) ---
+    function Sidebar({ currentView, setCurrentView, trackingData, vocabCount, studentName }) {
+      const steps = [
+        { id: 'home', title: '0. 英文建築師', isDone: !!studentName },
+        { id: 't1', title: 'T1. 單字閃示卡', isDone: trackingData.t1Completed },
+        { id: 't2', title: 'T2. 單字紅綠燈', isDone: Object.keys(trackingData.t2TrafficLights).length === vocabCount && vocabCount > 0 },
+        { id: 't3', title: 'T3. 單字乒乓賽', isDone: trackingData.t3CompletedLevels.length === 4 },
+        { id: 't4', title: 'T4. 學習歷程報告', isDone: trackingData.t1Completed && (Object.keys(trackingData.t2TrafficLights).length === vocabCount) && (trackingData.t3CompletedLevels.length === 4) }
+      ];
+
+      return (
+        <aside className="w-full md:w-64 shrink-0 print:hidden">
+          <div className="bg-white rounded-2xl shadow-md p-4 sticky top-4 border-t-4 border-indigo-400">
+            <h3 className="font-bold text-lg text-slate-700 mb-4 border-b pb-2 flex items-center gap-2">
+              <span>📋</span> 任務進度
+            </h3>
+            <ul className="space-y-2">
+              {steps.map((step) => {
+                const isActive = currentView === step.id;
+                return (
+                  <li key={step.id}>
+                    <button
+                      onClick={() => setCurrentView(step.id)}
+                      className={`w-full text-left flex items-center gap-3 p-3 rounded-xl transition-all ${
+                        isActive 
+                          ? 'bg-indigo-50 text-indigo-700 font-bold border border-indigo-200 shadow-sm' 
+                          : 'text-slate-600 hover:bg-slate-50 border border-transparent'
+                      } ${!isActive && step.isDone ? 'text-green-600 font-medium' : ''}`}
+                    >
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                        isActive ? 'bg-indigo-500 text-white' : 
+                        step.isDone ? 'bg-green-500 text-white' : 
+                        'bg-slate-100 text-slate-300'
+                      }`}>
+                        {step.isDone && !isActive ? '✓' : ''}
+                        {isActive ? '●' : ''}
+                      </div>
+                      <span className="flex-1 text-sm md:text-base">{step.title}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </aside>
+      );
+    }
+
+    // --- 視圖: 教師編輯區 ---
+    function TeacherEditView({ allVocabData, onSave, onCancel }) {
+      const [editUnit, setEditUnit] = useState('U1');
+      const [inputText, setInputText] = useState("");
+      const [error, setError] = useState("");
+
+      // 當切換單元時，載入該單元的資料並轉為文字格式
+      useEffect(() => {
+        const unitList = allVocabData[editUnit] || [];
+        const textFormat = unitList.map(v => {
+          let line = `${v.category} | ${v.word} | ${v.meaning}`;
+          if (v.image || v.audio) line += ` | ${v.image || ''}`;
+          if (v.audio) line += ` | ${v.audio}`;
+          return line;
+        }).join('\n');
+        setInputText(textFormat);
+        setError("");
+      }, [editUnit, allVocabData]);
+
+      const handleSave = () => {
+        const lines = inputText.split('\n');
+        const newList = [];
+        let idCount = 1;
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          
+          const parts = line.split('|').map(s => s.trim());
+          if (parts.length < 2) {
+            setError(`第 ${i + 1} 行格式錯誤，至少需要包含英文與中文 (用 | 區隔)`);
+            return;
+          }
+
+          // 智慧辨識分類 (相容舊格式與新格式)
+          let category = "主題單字"; // 預設類別
+          let wordIdx = 0;
+          
+          const firstPart = parts[0];
+          // 如果第一個詞是分類關鍵字，就將它當成分類
+          if (/^(對話|主題|閱讀)(單字)?$/.test(firstPart)) {
+            if (firstPart.includes('對話')) category = '對話單字';
+            else if (firstPart.includes('閱讀')) category = '閱讀單字';
+            else category = '主題單字';
+            wordIdx = 1;
+          }
+
+          const word = parts[wordIdx];
+          const meaning = parts[wordIdx + 1];
+          const image = parts[wordIdx + 2] || "";
+          const audio = parts[wordIdx + 3] || "";
+
+          if (!word || !meaning) {
+             setError(`第 ${i + 1} 行格式解析失敗，請確保有單字與意思`);
+             return;
+          }
+
+          newList.push({ id: idCount++, category, word, meaning, image, audio });
+        }
+
+        setError("");
+        
+        // 更新全局資料中對應單元的部分
+        const newData = { ...allVocabData, [editUnit]: newList };
+        onSave(newData);
+      };
+
+      return (
+        <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-indigo-500 w-full">
+          <h2 className="text-2xl font-bold text-indigo-700 mb-6 flex items-center gap-2">
+            ✏️ 資料編輯區 (Teacher Editor)
+          </h2>
+
+          <div className="flex gap-2 overflow-x-auto mb-6 pb-2">
+            {['U1', 'U2', 'U3', 'U4', 'U5', 'U6'].map(u => (
+              <button 
+                key={u} 
+                onClick={() => setEditUnit(u)}
+                className={`px-6 py-2 rounded-lg font-bold transition-colors shadow-sm whitespace-nowrap ${editUnit === u ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                編輯 {u}
+              </button>
+            ))}
+          </div>
+
+          <div className="text-slate-600 mb-4 text-sm bg-slate-50 p-4 rounded border">
+            <p className="font-bold text-indigo-600 mb-2">正在編輯：{editUnit}</p>
+            請在下方貼上本課的單字。每行一個單字，格式支援智慧辨識：<br/>
+            <strong>[類別(選填)] | 英文單字 | 中文意思 | 圖片網址 (選填) | 音檔網址 (選填)</strong><br/><br/>
+            範例 1 (純文字，預設為主題單字)：<br/>
+            <span className="text-slate-500 font-mono">apple | 蘋果</span><br/>
+            範例 2 (指定分類為對話/主題/閱讀)：<br/>
+            <span className="text-slate-500 font-mono">對話 | banana | 香蕉</span><br/>
+            範例 3 (加入圖片與專屬音檔)：<br/>
+            <span className="text-slate-500 font-mono break-all">閱讀 | cat | 貓咪 | https://...jpg | https://...mp3</span>
+          </div>
+          
+          <textarea
+            className="w-full h-64 p-4 border-2 border-slate-300 rounded-lg focus:outline-none focus:border-indigo-500 font-mono text-sm mb-2 whitespace-pre overflow-x-auto"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            placeholder="請依照格式輸入單字..."
+          ></textarea>
+          
+          {error && <div className="text-red-500 mb-4 font-bold text-sm bg-red-50 p-2 rounded">{error}</div>}
+          
+          <div className="flex gap-4">
+            <button onClick={handleSave} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg transition-colors">
+              儲存 {editUnit} 並套用 (Save)
+            </button>
+            <button onClick={onCancel} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 rounded-lg transition-colors">
+              取消 (Cancel)
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 視圖 0: 首頁 / 登入 ---
+    function HomeView({ onStart, activeVocabList, initialName, selectedUnit, setSelectedUnit, selectedCategory, setSelectedCategory, selectedRange, setSelectedRange }) {
+      const [name, setName] = useState(initialName || '');
+      const vocabCount = activeVocabList?.length || 0;
+      
+      const units = ['U1', 'U2', 'U3', 'U4', 'U5', 'U6'];
+      const categories = ['全部單字', '對話單字', '主題單字', '閱讀單字'];
+      const ranges = ['全部', '1-10', '11-20', '21-30', '31-40', '41-50'];
+
+      return (
+        <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-indigo-500 w-full max-w-2xl mx-auto">
+          <div className="text-center">
+            <div className="text-6xl mb-4 mt-2">🏗️</div>
+            <h2 className="text-3xl font-bold mb-2 text-indigo-700">英文建築師</h2>
+            <p className="text-slate-500 mb-8">聽發音、開口說，一步步蓋出你的英文大樓！</p>
+          </div>
+          
+          <div className="space-y-6 mb-8 bg-slate-50 p-6 rounded-xl border border-slate-200">
+            {/* 單元選擇 */}
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <span>📚</span> 1. 請選擇複習單元 (Select Unit)
+              </label>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                {units.map(u => (
+                  <button 
+                    key={u}
+                    onClick={() => setSelectedUnit(u)}
+                    className={`py-2 rounded-lg font-bold text-sm transition-all border-2 ${selectedUnit === u ? 'bg-indigo-100 border-indigo-500 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-indigo-300'}`}
+                  >
+                    {u}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 分類範圍選擇 */}
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <span>🎯</span> 2. 單字範圍 (Filter Vocabulary)
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {categories.map(c => (
+                  <button 
+                    key={c}
+                    onClick={() => setSelectedCategory(c)}
+                    className={`py-2 px-1 rounded-lg font-bold text-sm transition-all border-2 ${selectedCategory === c ? 'bg-blue-100 border-blue-500 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-blue-300'}`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 題號範圍選擇 */}
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <span>🔢</span> 3. 單字題號 (Word Range)
+              </label>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                {ranges.map(r => (
+                  <button 
+                    key={r}
+                    onClick={() => setSelectedRange(r)}
+                    className={`py-2 px-1 rounded-lg font-bold text-sm transition-all border-2 ${selectedRange === r ? 'bg-orange-100 border-orange-500 text-orange-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-orange-300'}`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="text-center pt-2">
+              <span className="inline-block bg-white border border-slate-200 text-slate-600 px-4 py-1.5 rounded-full text-sm font-bold shadow-sm mb-4">
+                目前篩選出：<span className={vocabCount > 0 ? "text-indigo-600 text-lg" : "text-red-500 text-lg"}>{vocabCount}</span> 個單字
+              </span>
+              
+              {/* 單字預覽區塊 */}
+              <div className="bg-white border-2 border-slate-200 rounded-xl p-4 max-h-48 overflow-y-auto shadow-inner text-left">
+                {vocabCount > 0 ? (
+                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+                    {activeVocabList.map((v, idx) => (
+                      <li key={v.id} className="text-sm flex justify-between border-b border-slate-100 pb-1">
+                        <span className="font-bold text-slate-700">{idx + 1}. {v.word}</span>
+                        <span className="text-slate-500">{v.meaning}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="text-center text-slate-400 py-4">此範圍無單字，請重新選擇過濾條件</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-6 text-left max-w-sm mx-auto">
+            <label className="block text-sm font-bold text-slate-700 mb-2">4. 學生姓名 (Student Name)</label>
+            <input 
+              type="text" 
+              value={name} 
+              onChange={(e) => setName(e.target.value)} 
+              placeholder="請輸入姓名開始任務" 
+              className="w-full px-4 py-3 rounded-lg border-2 border-slate-300 focus:outline-none focus:border-indigo-500 text-lg text-center font-medium shadow-sm transition-colors" 
+              onKeyDown={(e) => { if (e.key === 'Enter' && name.trim() && vocabCount > 0) onStart(name); }} 
+            />
+          </div>
+          <div className="max-w-sm mx-auto">
+            <button 
+              onClick={() => onStart(name || '訪客')} 
+              disabled={!name.trim() || vocabCount === 0} 
+              className={`w-full py-4 rounded-xl font-bold text-lg transition-all shadow-md ${(!name.trim() || vocabCount === 0) ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none' : 'bg-indigo-600 hover:bg-indigo-700 text-white transform hover:-translate-y-1'}`}
+            >
+              {vocabCount === 0 ? '此範圍無單字' : '🚀 開始任務 (Start Mission)'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 視圖 1: 單字閃示卡 ---
+    function Task1Flashcards({ vocabList, onComplete }) {
+      const [currentIndex, setCurrentIndex] = useState(0);
+      const [playbackRate, setPlaybackRate] = useState(0.9);
+      const currentWord = vocabList[currentIndex];
+
+      useEffect(() => {
+        if (currentWord) {
+          setTimeout(() => playAudio(currentWord.word, currentWord.audio, playbackRate), 300);
+        }
+      }, [currentIndex, currentWord, playbackRate]);
+
+      const handleNext = () => {
+        if (currentIndex < vocabList.length - 1) setCurrentIndex(prev => prev + 1);
+      };
+
+      const handlePrev = () => {
+        if (currentIndex > 0) setCurrentIndex(prev => prev - 1);
+      };
+
+      if (!vocabList || vocabList.length === 0) return <div className="p-8 text-center text-red-500 font-bold">此單元與範圍內無單字！請回首頁重新選擇。</div>;
+
+      return (
+        <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-blue-500 w-full">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-blue-700">T1. 單字閃示卡</h2>
+            <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-semibold">{currentIndex + 1} / {vocabList.length}</span>
+          </div>
+          <p className="text-slate-600 mb-6 text-center text-lg">聽發音並觀看字義，準備好後點擊完成進入下一關！</p>
+          
+          <div className="text-center mb-8 bg-slate-50 py-10 px-4 rounded-2xl border border-slate-200 shadow-inner min-h-[300px] flex flex-col justify-center items-center relative">
+            
+            {currentWord?.image && (
+              <img 
+                src={currentWord.image} 
+                alt={currentWord.word} 
+                className="w-48 h-48 md:w-64 md:h-64 object-cover rounded-xl shadow-md mb-6 border-4 border-white bg-white"
+                onError={(e) => { e.target.style.display = 'none'; }} 
+              />
+            )}
+
+            <div className="text-5xl md:text-7xl font-bold text-slate-800 mb-4 tracking-wider">{currentWord?.word}</div>
+            <div className="text-slate-500 text-2xl mb-2">{currentWord?.meaning}</div>
+            <div className="text-xs text-blue-400 font-bold px-2 py-1 bg-blue-50 rounded mb-4 border border-blue-100">{currentWord?.category}</div>
+            
+            <div className="mt-4 flex flex-col sm:flex-row items-center gap-4">
+              <button 
+                onClick={() => playAudio(currentWord?.word, currentWord?.audio, playbackRate)} 
+                className="flex items-center gap-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-6 py-3 rounded-full transition-colors font-bold text-lg"
+              >
+                🔊 重聽發音
+              </button>
+
+              <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-200">
+                <span className="text-sm font-bold text-slate-500 mr-1">發音速度:</span>
+                {[
+                  { label: '正常', value: 1.0 }, 
+                  { label: '慢速', value: 0.7 }, 
+                  { label: '最慢', value: 0.5 }
+                ].map(speed => (
+                  <button 
+                    key={speed.value} 
+                    onClick={() => {
+                      setPlaybackRate(speed.value);
+                      playAudio(currentWord?.word, currentWord?.audio, speed.value); 
+                    }} 
+                    className={`px-3 py-1 rounded-lg text-sm font-bold transition-colors ${playbackRate === speed.value ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                  >
+                    {speed.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          <div className="flex justify-between items-center gap-4 mb-8">
+            <button 
+              onClick={handlePrev} 
+              disabled={currentIndex === 0} 
+              className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all flex justify-center items-center gap-2 ${currentIndex === 0 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-200 hover:bg-slate-300 text-slate-700 shadow-sm'}`}
+            >
+              ⬅️ 上一個
+            </button>
+            <button 
+              onClick={handleNext} 
+              disabled={currentIndex === vocabList.length - 1} 
+              className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all flex justify-center items-center gap-2 ${currentIndex === vocabList.length - 1 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600 text-white shadow-md'}`}
+            >
+              下一個 ➡️
+            </button>
+          </div>
+
+          <div className="text-center border-t border-slate-200 pt-6 mt-4">
+            <button 
+              onClick={onComplete}
+              className="w-full md:w-auto px-10 py-4 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold text-xl shadow-lg transition-transform hover:-translate-y-1"
+            >
+              ✅ 完成複習，進入單字紅綠燈
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 視圖 2: 單字紅綠燈 ---
+    function Task2TrafficLight({ vocabList, initialData, onComplete }) {
+      const [evaluations, setEvaluations] = useState(initialData || {});
+      
+      const handleEval = (id, status) => {
+        setEvaluations(prev => {
+          const newData = { ...prev, [id]: status };
+          onComplete(newData, false); 
+          return newData;
+        });
+      };
+      
+      const isAllEvaluated = vocabList.length > 0 && vocabList.every(v => evaluations[v.id]);
+
+      if (!vocabList || vocabList.length === 0) return null;
+
+      return (
+        <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-yellow-500 w-full">
+          <h2 className="text-2xl font-bold text-yellow-600 mb-2">T2. 單字紅綠燈</h2>
+          <p className="text-slate-600 mb-6">請誠實面對自己！標記你對單字的熟悉度。</p>
+          <div className="flex flex-col md:flex-row gap-4 mb-8">
+            <div className="flex-1 bg-green-50 border border-green-200 p-4 rounded-xl">
+              <h4 className="font-bold text-green-700 flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-green-500 inline-block"></span> 綠燈 (Go)</h4>
+              <ul className="text-sm text-green-800 mt-2 list-disc pl-4"><li>我一看到就會唸，也知道意思。</li><li>我可以馬上拼出來。</li></ul>
+            </div>
+            <div className="flex-1 bg-red-50 border border-red-200 p-4 rounded-xl">
+              <h4 className="font-bold text-red-700 flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-red-500 inline-block"></span> 紅燈 (Stop)</h4>
+              <ul className="text-sm text-red-800 mt-2 list-disc pl-4"><li>我不會唸，或常常唸錯。</li><li>我總是記不起意思。</li></ul>
+            </div>
+          </div>
+          <div className="space-y-3 mb-8">
+            {vocabList.map(vocab => (
+              <div key={vocab.id} className="flex items-center justify-between p-3 md:p-4 bg-slate-50 rounded-xl border border-slate-200 hover:shadow-sm transition-shadow">
+                <div className="flex flex-col md:flex-row md:items-baseline gap-1 md:gap-4 flex-1">
+                  <span className="font-bold text-lg text-slate-800 w-32">{vocab.word}</span>
+                  <span className="text-slate-500">{vocab.meaning}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleEval(vocab.id, 'green')} className={`px-3 py-2 rounded-lg font-bold text-sm transition-colors ${evaluations[vocab.id] === 'green' ? 'bg-green-500 text-white shadow-inner' : 'bg-white border-2 border-green-500 text-green-600 hover:bg-green-50'}`}>綠燈</button>
+                  <button onClick={() => handleEval(vocab.id, 'red')} className={`px-3 py-2 rounded-lg font-bold text-sm transition-colors ${evaluations[vocab.id] === 'red' ? 'bg-red-500 text-white shadow-inner' : 'bg-white border-2 border-red-500 text-red-600 hover:bg-red-50'}`}>紅燈</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => onComplete(evaluations, true)} disabled={!isAllEvaluated} className={`w-full py-4 rounded-xl font-bold text-lg transition-all ${isAllEvaluated ? 'bg-yellow-500 hover:bg-yellow-600 text-white shadow-md' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+            {isAllEvaluated ? '完成評估，進入乒乓賽' : '請完成所有單字評估'}
+          </button>
+        </div>
+      );
+    }
+
+    // --- 視圖 3: 單字乒乓賽 ---
+    function Task3PingPong({ vocabList, completedLevels, onLevelComplete, onCompleteAll }) {
+      const [selectedLevel, setSelectedLevel] = useState(null);
+      const [currentWordIndex, setCurrentWordIndex] = useState(0);
+      const [options, setOptions] = useState([]);
+      const [feedback, setFeedback] = useState(null);
+      const [usedForcePass, setUsedForcePass] = useState(false);
+      const [isListening, setIsListening] = useState(false);
+      const [speechError, setSpeechError] = useState("");
+
+      const currentWord = vocabList[currentWordIndex];
+      const isLevelFinished = selectedLevel && currentWordIndex >= vocabList.length;
+
+      const levelInfo = {
+        1: { title: "L1 聽音辨字", desc: "Listen & Choose Word", color: "text-purple-600", border: "border-purple-500" },
+        2: { title: "L2 聽音辨義", desc: "Listen & Choose Meaning", color: "text-pink-600", border: "border-pink-500" },
+        3: { title: "L3 看英說英", desc: "See Word, Speak English", color: "text-orange-600", border: "border-orange-500" },
+        4: { title: "L4 看中說英", desc: "See Chinese, Speak English", color: "text-red-600", border: "border-red-500" }
+      };
+
+      const startLevel = (lvl) => {
+        setSelectedLevel(lvl);
+        setCurrentWordIndex(0);
+        setFeedback(null);
+        setUsedForcePass(false);
+        setIsListening(false);
+        setSpeechError("");
+      };
+
+      useEffect(() => {
+        if (selectedLevel && selectedLevel <= 2 && !isLevelFinished && currentWord) {
+          const wrongOptions = vocabList.filter(v => v.id !== currentWord.id).sort(() => 0.5 - Math.random()).slice(0, 3);
+          setOptions(shuffleArray([...wrongOptions, currentWord]));
+          if (selectedLevel === 1 || selectedLevel === 2) setTimeout(() => playAudio(currentWord.word, currentWord.audio), 300);
+        }
+      }, [currentWordIndex, selectedLevel, isLevelFinished, currentWord, vocabList]);
+
+      const handleChoice = (selectedVocab) => {
+        if (selectedVocab.id === currentWord.id) {
+          setFeedback('correct'); 
+          playAudio("Correct");
+          setTimeout(() => { setFeedback(null); setCurrentWordIndex(prev => prev + 1); }, 1000);
+        } else {
+          setFeedback('wrong'); setTimeout(() => setFeedback(null), 800);
+        }
+      };
+
+      const handleListen = () => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          setSpeechError("您的瀏覽器不支援語音辨識功能，請使用 Chrome 或 Edge，或點擊下方強制通關。");
+          return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'en-US';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+        setIsListening(true); 
+        setSpeechError("");
+
+        try {
+          recognition.start();
+        } catch (err) {
+          console.error("語音辨識啟動失敗:", err);
+          setIsListening(false);
+          setSpeechError("麥克風無法存取 (可能是協作平台安全性限制)，請直接點擊下方「強制通關」。");
+          return; 
+        }
+
+        recognition.onresult = (event) => {
+          const transcript = event.results[0][0].transcript.toLowerCase().trim();
+          const cleanTranscript = transcript.replace(/[.,!?]/g, "");
+          const targetWord = currentWord.word.toLowerCase();
+
+          if (cleanTranscript.includes(targetWord) || targetWord.includes(cleanTranscript)) {
+            setFeedback('correct'); playAudio("Excellent");
+            setTimeout(() => { setFeedback(null); setCurrentWordIndex(prev => prev + 1); }, 1000);
+          } else {
+            setFeedback('wrong'); setSpeechError(`系統聽到的是: "${transcript}"，再試一次！`);
+            setTimeout(() => setFeedback(null), 2000);
+          }
+          setIsListening(false);
+        };
+        
+        recognition.onerror = (e) => {
+          console.error("語音錯誤:", e.error);
+          setIsListening(false);
+          setSpeechError("麥克風收音發生錯誤或被拒絕，請重試或使用強制通關。");
+        };
+        
+        recognition.onend = () => setIsListening(false);
+      };
+
+      const forcePass = () => {
+        setUsedForcePass(true); setFeedback('correct');
+        setTimeout(() => { setFeedback(null); setCurrentWordIndex(prev => prev + 1); setSpeechError(""); }, 500);
+      };
+
+      if (!vocabList || vocabList.length === 0) return null;
+
+      if (!selectedLevel) {
+        const isAllDone = completedLevels.length >= 4;
+        return (
+          <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-indigo-500 w-full">
+            <h2 className="text-2xl font-bold text-indigo-700 mb-2">T3. 單字乒乓賽</h2>
+            <p className="text-slate-600 mb-6">請選擇你要挑戰的關卡，依照個人進度完成所有四個關卡！</p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+              {[1, 2, 3, 4].map(lvl => {
+                const levelId = 'l' + lvl;
+                const isDone = completedLevels.includes(levelId);
+                const info = levelInfo[lvl];
+                return (
+                  <button 
+                    key={lvl} 
+                    onClick={() => startLevel(lvl)} 
+                    className={`p-6 rounded-xl border-2 text-left transition-all relative overflow-hidden group ${
+                      isDone ? 'bg-green-50 border-green-300' : 'bg-white border-slate-200 hover:border-indigo-400 hover:shadow-md'
+                    }`}
+                  >
+                    <div className={`font-bold text-xl mb-1 ${info.color}`}>{info.title}</div>
+                    <div className="text-sm text-slate-500">{info.desc}</div>
+                    {isDone && <div className="absolute top-4 right-4 text-green-500 text-2xl" title="已完成">✅</div>}
+                    {!isDone && <div className="absolute top-4 right-4 text-slate-200 text-2xl group-hover:text-indigo-200 transition-colors">▶️</div>}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button 
+              onClick={onCompleteAll} 
+              disabled={!isAllDone} 
+              className={`w-full py-4 rounded-xl font-bold text-lg transition-all ${isAllDone ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+            >
+              {isAllDone ? '🎉 完成乒乓賽，前往學習歷程報告' : '🔒 請先完成所有四個關卡'}
+            </button>
+          </div>
+        );
+      }
+
+      if (isLevelFinished) {
+        return (
+          <CompletionScreen 
+            title={`Level ${selectedLevel} 挑戰成功！`} 
+            message="你已經完成這個關卡的測驗。" 
+            btnText="回關卡選單" 
+            onNext={() => {
+              onLevelComplete('l' + selectedLevel, usedForcePass);
+              setSelectedLevel(null);
+            }} 
+            colorClass="bg-purple-600" 
+          />
+        );
+      }
+
+      return (
+        <div className={`bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 ${levelInfo[selectedLevel].border} w-full`}>
+          <div className="flex justify-between items-baseline mb-2">
+            <h2 className={`text-2xl font-bold ${levelInfo[selectedLevel].color}`}>T3. {levelInfo[selectedLevel].title}</h2>
+            <div className="flex items-center gap-3 md:gap-6">
+              <span className="text-slate-500 font-bold text-sm">Word {currentWordIndex + 1} / {vocabList.length}</span>
+              <button onClick={() => setSelectedLevel(null)} className="text-sm bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg transition-colors font-bold shadow-sm">
+                🔙 回選單
+              </button>
+            </div>
+          </div>
+          <p className="text-slate-500 mb-8">{levelInfo[selectedLevel].desc}</p>
+          
+          {selectedLevel <= 2 && (
+            <div className="flex flex-col items-center">
+              <button onClick={() => playAudio(currentWord?.word, currentWord?.audio)} className="w-24 h-24 bg-indigo-100 hover:bg-indigo-200 text-indigo-600 rounded-full flex items-center justify-center text-4xl mb-8 transition-transform hover:scale-105 shadow-inner">🔊</button>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
+                {options.map(opt => (
+                  <button key={opt.id} onClick={() => handleChoice(opt)} disabled={feedback !== null} className={`p-4 rounded-xl border-2 text-lg font-medium transition-all ${feedback === 'wrong' ? 'border-red-200 bg-red-50 opacity-50' : feedback === 'correct' && opt.id === currentWord.id ? 'border-green-500 bg-green-100 text-green-700' : 'border-slate-200 bg-white hover:border-indigo-400 hover:shadow-md'}`}>{selectedLevel === 1 ? opt.word : opt.meaning}</button>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {selectedLevel >= 3 && (
+            <div className="flex flex-col items-center text-center">
+              <div className="text-5xl md:text-6xl font-bold text-slate-800 mb-8 min-h-[80px] flex items-center justify-center">{selectedLevel === 3 ? currentWord?.word : currentWord?.meaning}</div>
+              <button onClick={handleListen} disabled={isListening || feedback !== null} className={`w-32 h-32 rounded-full flex flex-col items-center justify-center text-white shadow-lg transition-all transform hover:scale-105 mb-6 ${isListening ? 'bg-red-500 animate-pulse' : 'bg-indigo-500 hover:bg-indigo-600'}`}>
+                <span className="text-4xl mb-1">{isListening ? '🎙️' : '🎤'}</span>
+                <span className="font-bold text-sm">{isListening ? '聆聽中...' : '點擊說話'}</span>
+              </button>
+              {speechError && <div className="text-red-500 bg-red-50 px-4 py-2 rounded-lg mb-4 text-sm max-w-sm">{speechError}</div>}
+              <button onClick={forcePass} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-6 py-2 rounded-full text-sm font-bold mt-4 border border-slate-300 transition-colors shadow-sm">
+                ⚡ 辨識卡住或沒麥克風？點此強制通關
+              </button>
+            </div>
+          )}
+          {feedback === 'wrong' && <div className="text-center text-red-500 mt-6 font-bold animate-pulse text-lg">再試一次！</div>}
+          {feedback === 'correct' && <div className="text-center text-green-500 mt-6 font-bold animate-bounce text-lg">太棒了！</div>}
+        </div>
+      );
+    }
+
+    // --- 視圖 4: 學習歷程輸出 ---
+    function Task4Export({ vocabList, studentName, trackingData, setCurrentView, selectedUnit, selectedCategory, selectedRange }) {
+      const totalWords = vocabList.length;
+      
+      const t1Done = trackingData.t1Completed;
+      const t2Done = Object.keys(trackingData.t2TrafficLights).length === totalWords && totalWords > 0;
+      const t3Done = trackingData.t3CompletedLevels.length === 4;
+      const allDone = t1Done && t2Done && t3Done;
+
+      const greenCount = Object.values(trackingData.t2TrafficLights).filter(v => v === 'green').length;
+      const greenPercent = Math.round((greenCount / totalWords) * 100) || 0;
+      const t1Percent = t1Done ? 100 : 0;
+      const t3Percent = (trackingData.t3CompletedLevels.length / 4) * 100;
+      const handlePrint = () => window.print();
+
+      return (
+        <div className="bg-white p-8 md:p-10 rounded-2xl shadow-xl border-t-8 border-indigo-600 w-full">
+          <div className="text-center mb-8 border-b pb-6">
+            <h2 className="text-3xl font-black text-slate-800 mb-2">學習歷程報告書</h2>
+            <h3 className="text-xl text-slate-500">英文建築師</h3>
+            
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              <span className="bg-indigo-50 text-indigo-800 font-bold px-4 py-2 rounded-lg border border-indigo-100">學生: {studentName || '未具名'}</span>
+              <span className="bg-blue-50 text-blue-800 font-bold px-4 py-2 rounded-lg border border-blue-100">單元: {selectedUnit}</span>
+              <span className="bg-purple-50 text-purple-800 font-bold px-4 py-2 rounded-lg border border-purple-100">範圍: {selectedCategory}</span>
+              <span className="bg-orange-50 text-orange-800 font-bold px-4 py-2 rounded-lg border border-orange-100">題號: {selectedRange}</span>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 text-center">
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200"><div className="text-sm text-slate-500 mb-1">單字總數</div><div className="text-2xl font-bold text-slate-800">{totalWords}</div></div>
+            <div className="bg-blue-50 p-4 rounded-xl border border-blue-200"><div className="text-sm text-blue-600 mb-1">閃示卡完成度(T1)</div><div className="text-2xl font-bold text-blue-800">{t1Percent}%</div></div>
+            <div className="bg-green-50 p-4 rounded-xl border border-green-200"><div className="text-sm text-green-600 mb-1">綠燈掌握度(T2)</div><div className="text-2xl font-bold text-green-800">{greenPercent}%</div></div>
+            <div className="bg-purple-50 p-4 rounded-xl border border-purple-200"><div className="text-sm text-purple-600 mb-1">聽說綜合(T3)</div><div className="text-2xl font-bold text-purple-800">{t3Percent}%</div></div>
+          </div>
+
+          {!allDone && (
+            <div className="bg-red-50 p-6 rounded-xl text-center print:hidden border border-red-200 mb-8 shadow-sm">
+              <h4 className="text-red-700 font-bold mb-4 text-xl">⚠️ 還有任務尚未完成喔！</h4>
+              <p className="text-slate-600 mb-4">請點擊下方按鈕，前往尚未完成的關卡：</p>
+              <div className="flex flex-col md:flex-row justify-center gap-4">
+                {!t1Done && <button onClick={() => setCurrentView('t1')} className="bg-white border-2 border-red-400 text-red-600 px-6 py-3 rounded-lg font-bold hover:bg-red-100 transition-colors shadow-sm">前往 T1. 單字閃示卡</button>}
+                {!t2Done && <button onClick={() => setCurrentView('t2')} className="bg-white border-2 border-red-400 text-red-600 px-6 py-3 rounded-lg font-bold hover:bg-red-100 transition-colors shadow-sm">前往 T2. 單字紅綠燈</button>}
+                {!t3Done && <button onClick={() => setCurrentView('t3')} className="bg-white border-2 border-red-400 text-red-600 px-6 py-3 rounded-lg font-bold hover:bg-red-100 transition-colors shadow-sm">前往 T3. 單字乒乓賽</button>}
+              </div>
+            </div>
+          )}
+
+          <div className="mb-8 overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead><tr className="bg-slate-100 border-b-2 border-slate-300"><th className="p-3 font-bold text-slate-700">單字 (Word)</th><th className="p-3 font-bold text-slate-700 text-center">自評 (T2)</th><th className="p-3 font-bold text-slate-700 text-center">測驗狀態</th></tr></thead>
+              <tbody>
+                {vocabList.map((vocab, index) => {
+                  const light = trackingData.t2TrafficLights[vocab.id];
+                  return (
+                    <tr key={vocab.id} className={`border-b border-slate-200 ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
+                      <td className="p-3">
+                        <div className="font-bold text-slate-800">{vocab.word}</div>
+                        <div className="text-slate-500 text-sm">({vocab.meaning})</div>
+                      </td>
+                      <td className="p-3 text-center">{light === 'green' ? <span className="text-green-500 font-bold">🟢 綠燈</span> : light === 'red' ? <span className="text-red-500 font-bold">🔴 紅燈</span> : '-'}</td>
+                      <td className="p-3 text-center text-indigo-600 font-bold">{allDone ? '✔️ 已完成' : '進行中'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          
+          {trackingData.usedForcePass && <div className="text-sm text-slate-500 italic mb-6 text-right">* 註：口說測驗包含強制通關紀錄</div>}
+          
+          {allDone && (
+            <div className="bg-indigo-50 p-6 rounded-xl text-center print:hidden border border-indigo-100">
+              <p className="text-indigo-800 font-bold mb-4 text-xl">Great Job! 恭喜完成所有任務！</p>
+              <p className="text-sm text-indigo-600 mb-6">請將此頁面列印成 PDF 或截圖，並上傳至 Google Classroom 繳交。</p>
+              <button onClick={handlePrint} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-10 rounded-full shadow-lg transition-transform hover:-translate-y-1 flex items-center justify-center gap-2 mx-auto text-lg">🖨️ 產生 PDF / 列印報告</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // --- 共用元件: 關卡完成過渡畫面 ---
+    function CompletionScreen({ title, message, btnText, onNext, colorClass = "bg-indigo-600" }) {
+      return (
+        <div className="bg-white p-10 rounded-2xl shadow-lg text-center border-t-4 border-slate-200 w-full">
+          <div className="text-6xl mb-6">🏆</div>
+          <h2 className="text-3xl font-bold text-slate-800 mb-4">{title}</h2>
+          <p className="text-slate-600 mb-8 text-lg">{message}</p>
+          <button onClick={onNext} className={`${colorClass} hover:opacity-90 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform hover:-translate-y-1`}>{btnText}</button>
+        </div>
+      );
+    }
+
+    // --- 啟動 React 應用程式 ---
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

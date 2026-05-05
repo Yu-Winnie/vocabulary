@@ -28,15 +28,61 @@
 
     // --- 預設單字庫 (支援 U1~U6 與分類) ---
     const DEFAULT_VOCAB_DATA = {
-      U1: [
-        { id: 1, category: "主題單字", word: "architect", meaning: "建築師", image: "", audio: "" },
-        { id: 2, category: "主題單字", word: "vocabulary", meaning: "字彙", image: "", audio: "" },
-        { id: 3, category: "對話單字", word: "interactive", meaning: "互動的", image: "", audio: "" },
-        { id: 4, category: "對話單字", word: "education", meaning: "教育", image: "", audio: "" },
-        { id: 5, category: "閱讀單字", word: "student", meaning: "學生", image: "", audio: "" },
-        { id: 6, category: "閱讀單字", word: "computer", meaning: "電腦", image: "", audio: "" }
+      "U1": [
+        {
+          "id": 1,
+          "category": "主題單字",
+          "word": "architect",
+          "meaning": "建築師",
+          "image": "",
+          "audio": ""
+        },
+        {
+          "id": 2,
+          "category": "主題單字",
+          "word": "vocabulary",
+          "meaning": "字彙",
+          "image": "",
+          "audio": ""
+        },
+        {
+          "id": 3,
+          "category": "對話單字",
+          "word": "interactive",
+          "meaning": "互動的",
+          "image": "",
+          "audio": ""
+        },
+        {
+          "id": 4,
+          "category": "對話單字",
+          "word": "education",
+          "meaning": "教育",
+          "image": "",
+          "audio": ""
+        },
+        {
+          "id": 5,
+          "category": "閱讀單字",
+          "word": "student",
+          "meaning": "學生",
+          "image": "",
+          "audio": ""
+        },
+        {
+          "id": 6,
+          "category": "閱讀單字",
+          "word": "computer",
+          "meaning": "電腦",
+          "image": "",
+          "audio": ""
+        }
       ],
-      U2: [], U3: [], U4: [], U5: [], U6: []
+      "U2": [],
+      "U3": [],
+      "U4": [],
+      "U5": [],
+      "U6": []
     };
 
     // --- 共用工具函式 ---
@@ -283,6 +329,8 @@
       const [editUnit, setEditUnit] = useState('U1');
       const [inputText, setInputText] = useState("");
       const [error, setError] = useState("");
+      const [exportCode, setExportCode] = useState("");
+      const [copyStatus, setCopyStatus] = useState("");
 
       // 當切換單元時，載入該單元的資料並轉為文字格式
       useEffect(() => {
@@ -295,9 +343,11 @@
         }).join('\n');
         setInputText(textFormat);
         setError("");
+        setExportCode(""); // 切換時清空匯出代碼
       }, [editUnit, allVocabData]);
 
-      const handleSave = () => {
+      // 解析輸入框內容的共用函數
+      const parseInput = () => {
         const lines = inputText.split('\n');
         const newList = [];
         let idCount = 1;
@@ -309,15 +359,12 @@
           const parts = line.split('|').map(s => s.trim());
           if (parts.length < 2) {
             setError(`第 ${i + 1} 行格式錯誤，至少需要包含英文與中文 (用 | 區隔)`);
-            return;
+            return null;
           }
 
-          // 智慧辨識分類 (相容舊格式與新格式)
           let category = "主題單字"; // 預設類別
           let wordIdx = 0;
-          
           const firstPart = parts[0];
-          // 如果第一個詞是分類關鍵字，就將它當成分類
           if (/^(對話|主題|閱讀)(單字)?$/.test(firstPart)) {
             if (firstPart.includes('對話')) category = '對話單字';
             else if (firstPart.includes('閱讀')) category = '閱讀單字';
@@ -332,17 +379,47 @@
 
           if (!word || !meaning) {
              setError(`第 ${i + 1} 行格式解析失敗，請確保有單字與意思`);
-             return;
+             return null;
           }
 
           newList.push({ id: idCount++, category, word, meaning, image, audio });
         }
-
         setError("");
-        
-        // 更新全局資料中對應單元的部分
-        const newData = { ...allVocabData, [editUnit]: newList };
-        onSave(newData);
+        return { ...allVocabData, [editUnit]: newList };
+      };
+
+      const handleSave = () => {
+        const newData = parseInput();
+        if (newData) onSave(newData);
+      };
+
+      // 產生給 GitHub 使用的程式碼
+      const handleExportCode = () => {
+        const newData = parseInput();
+        if (newData) {
+          const jsonString = JSON.stringify(newData, null, 2);
+          const finalCode = `    // --- 預設單字庫 (支援 U1~U6 與分類) ---\n    const DEFAULT_VOCAB_DATA = ${jsonString};`;
+          setExportCode(finalCode);
+          setCopyStatus("");
+          // 順便儲存到本地，確保資料不流失
+          onSave(newData);
+        }
+      };
+
+      const copyToClipboard = () => {
+        try {
+          // 使用較通用的方法複製到剪貼簿 (相容於 iframe/協作平台)
+          const textArea = document.createElement("textarea");
+          textArea.value = exportCode;
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textArea);
+          setCopyStatus("✅ 代碼已成功複製！");
+          setTimeout(() => setCopyStatus(""), 3000);
+        } catch (err) {
+          setCopyStatus("❌ 複製失敗，請手動全選複製");
+        }
       };
 
       return (
@@ -384,14 +461,40 @@
           
           {error && <div className="text-red-500 mb-4 font-bold text-sm bg-red-50 p-2 rounded">{error}</div>}
           
-          <div className="flex gap-4">
-            <button onClick={handleSave} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg transition-colors">
-              儲存 {editUnit} 並套用 (Save)
+          <div className="flex flex-col md:flex-row gap-4 mb-6">
+            <button onClick={handleSave} className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg transition-colors shadow-sm">
+              💻 儲存於本機 (僅自己可見)
             </button>
-            <button onClick={onCancel} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 rounded-lg transition-colors">
-              取消 (Cancel)
+            <button onClick={handleExportCode} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg transition-colors shadow-sm">
+              📜 產生網頁更新碼 (匯出給 GitHub)
+            </button>
+            <button onClick={onCancel} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 px-6 rounded-lg transition-colors">
+              返回
             </button>
           </div>
+
+          {/* 匯出代碼顯示區塊 */}
+          {exportCode && (
+            <div className="mt-8 p-4 bg-slate-800 rounded-xl shadow-inner border-2 border-slate-700 relative">
+              <div className="flex justify-between items-center mb-2">
+                <p className="text-amber-400 font-bold text-sm flex items-center gap-2">
+                  <span>⚠️</span> 請複製下方全部代碼，到 GitHub 的 index.html 中取代原本的 `DEFAULT_VOCAB_DATA` 區塊
+                </p>
+                <button 
+                  onClick={copyToClipboard}
+                  className="bg-blue-500 hover:bg-blue-400 text-white px-4 py-1.5 rounded font-bold text-sm transition-colors"
+                >
+                  複製代碼
+                </button>
+              </div>
+              <textarea 
+                readOnly
+                value={exportCode}
+                className="w-full h-64 bg-slate-900 text-green-400 p-4 rounded font-mono text-xs focus:outline-none"
+              ></textarea>
+              {copyStatus && <div className="absolute bottom-6 right-6 bg-slate-700 text-white px-4 py-2 rounded shadow-lg font-bold animate-pulse">{copyStatus}</div>}
+            </div>
+          )}
         </div>
       );
     }

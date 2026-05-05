@@ -142,6 +142,12 @@
         setSelectedRange('全部');
       }, [selectedUnit, selectedCategory]);
 
+      // 計算真實的起始編號 (讓子元件能顯示如 第 11 題)
+      const startIndex = useMemo(() => {
+        if (selectedRange === '全部') return 0;
+        return parseInt(selectedRange.split('-')[0], 10) - 1;
+      }, [selectedRange]);
+
       // 2. 再依題號範圍過濾出最終要測驗的清單
       const activeVocabList = useMemo(() => {
         if (selectedRange !== '全部') {
@@ -200,20 +206,23 @@
                       setSelectedCategory={setSelectedCategory}
                       selectedRange={selectedRange}
                       setSelectedRange={setSelectedRange}
+                      startIndex={startIndex}
                    />;
           case 'teacher':
             return <TeacherEditView 
                       allVocabData={allVocabData} 
                       onSave={(newData) => { saveVocabList(newData); setCurrentView('home'); }} 
+                      onUpdateLocal={(newData) => { saveVocabList(newData); }}
                       onCancel={() => setCurrentView('home')} 
                    />;
           case 't1':
-            return <Task1Flashcards vocabList={activeVocabList} onComplete={() => { updateTracking('t1Completed', true); setCurrentView('t2'); }} />;
+            return <Task1Flashcards vocabList={activeVocabList} startIndex={startIndex} onComplete={() => { updateTracking('t1Completed', true); setCurrentView('t2'); }} />;
           case 't2':
-            return <Task2TrafficLight vocabList={activeVocabList} initialData={trackingData.t2TrafficLights} onComplete={(data) => { updateTracking('t2TrafficLights', data); setCurrentView('t3'); }} />;
+            return <Task2TrafficLight vocabList={activeVocabList} startIndex={startIndex} initialData={trackingData.t2TrafficLights} onComplete={(data) => { updateTracking('t2TrafficLights', data); setCurrentView('t3'); }} />;
           case 't3':
             return <Task3PingPong 
                       vocabList={activeVocabList} 
+                      startIndex={startIndex}
                       completedLevels={trackingData.t3CompletedLevels}
                       onLevelComplete={(levelId, usedForce) => {
                         const newLevels = trackingData.t3CompletedLevels.includes(levelId) 
@@ -227,6 +236,7 @@
           case 't4':
             return <Task4Export 
                       vocabList={activeVocabList} 
+                      startIndex={startIndex}
                       studentName={studentName} 
                       trackingData={trackingData} 
                       setCurrentView={setCurrentView}
@@ -235,7 +245,7 @@
                       selectedRange={selectedRange}
                    />;
           default:
-            return <HomeView onStart={handleStart} onEdit={() => setCurrentView('teacher')} activeVocabList={activeVocabList} totalCategoryWords={baseVocabList.length} initialName={studentName} selectedUnit={selectedUnit} setSelectedUnit={setSelectedUnit} selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory} selectedRange={selectedRange} setSelectedRange={setSelectedRange} />;
+            return <HomeView onStart={handleStart} onEdit={() => setCurrentView('teacher')} activeVocabList={activeVocabList} totalCategoryWords={baseVocabList.length} initialName={studentName} selectedUnit={selectedUnit} setSelectedUnit={setSelectedUnit} selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory} selectedRange={selectedRange} setSelectedRange={setSelectedRange} startIndex={startIndex} />;
         }
       };
 
@@ -330,7 +340,7 @@
     }
 
     // --- 視圖: 教師編輯區 ---
-    function TeacherEditView({ allVocabData, onSave, onCancel }) {
+    function TeacherEditView({ allVocabData, onSave, onUpdateLocal, onCancel }) {
       const [editUnit, setEditUnit] = useState('U1');
       const [inputText, setInputText] = useState("");
       const [error, setError] = useState("");
@@ -395,10 +405,10 @@
 
       const handleSave = () => {
         const newData = parseInput();
-        if (newData) onSave(newData);
+        if (newData) onSave(newData); // 儲存並跳回首頁
       };
 
-      // 產生給 GitHub 使用的程式碼
+      // 產生給 GitHub 使用的程式碼 (不再自動跳轉回首頁)
       const handleExportCode = () => {
         const newData = parseInput();
         if (newData) {
@@ -406,22 +416,27 @@
           const finalCode = `    // --- 預設單字庫 (支援 U1~U6 與分類) ---\n    const DEFAULT_VOCAB_DATA = ${jsonString};`;
           setExportCode(finalCode);
           setCopyStatus("");
-          // 順便儲存到本地，確保資料不流失
-          onSave(newData);
+          // 更新本地狀態以免遺失資料，但不跳轉畫面
+          if(onUpdateLocal) onUpdateLocal(newData);
+        }
+      };
+
+      const handleClearCache = () => {
+        if(window.confirm("⚠️ 警告：這將會清除您「瀏覽器上」的暫存測試資料！\n\n如果您已經把剛才產生的代碼更新到 GitHub 上，請點擊「確定」來重新載入 GitHub 上最新的正式資料！")) {
+          localStorage.removeItem('vocabArchitectMultiUnit');
+          window.location.reload();
         }
       };
 
       const copyToClipboard = () => {
         try {
-          // 使用較通用的方法複製到剪貼簿 (相容於 iframe/協作平台)
           const textArea = document.createElement("textarea");
           textArea.value = exportCode;
           document.body.appendChild(textArea);
           textArea.select();
           document.execCommand("copy");
           document.body.removeChild(textArea);
-          setCopyStatus("✅ 代碼已成功複製！");
-          setTimeout(() => setCopyStatus(""), 3000);
+          setCopyStatus("✅ 代碼複製成功！請依照左方說明至 GitHub 更新檔案！");
         } catch (err) {
           setCopyStatus("❌ 複製失敗，請手動全選複製");
         }
@@ -468,10 +483,13 @@
           
           <div className="flex flex-col md:flex-row gap-4 mb-6">
             <button onClick={handleSave} className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg transition-colors shadow-sm">
-              💻 儲存於本機 (僅自己可見)
+              💻 儲存於本機 (僅供自己測試)
             </button>
             <button onClick={handleExportCode} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg transition-colors shadow-sm">
-              📜 產生網頁更新碼 (匯出給 GitHub)
+              📜 產生 GitHub 更新碼
+            </button>
+            <button onClick={handleClearCache} className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-lg transition-colors shadow-sm" title="清除本機測試資料，重新載入線上最新設定">
+              🔄 刪除暫存 (同步 GitHub)
             </button>
             <button onClick={onCancel} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 px-6 rounded-lg transition-colors">
               返回
@@ -480,14 +498,21 @@
 
           {/* 匯出代碼顯示區塊 */}
           {exportCode && (
-            <div className="mt-8 p-4 bg-slate-800 rounded-xl shadow-inner border-2 border-slate-700 relative">
-              <div className="flex justify-between items-center mb-2">
-                <p className="text-amber-400 font-bold text-sm flex items-center gap-2">
-                  <span>⚠️</span> 請複製下方全部代碼，到 GitHub 的 index.html 中取代原本的 `DEFAULT_VOCAB_DATA` 區塊
-                </p>
+            <div className="mt-8 p-6 bg-slate-800 rounded-xl shadow-inner border-2 border-slate-700 relative">
+              <h3 className="text-amber-400 font-bold text-lg mb-2 flex items-center gap-2">
+                <span>⚠️</span> 如何同步到 GitHub 讓學生看見？(必看教學)
+              </h3>
+              <ol className="text-slate-300 text-sm list-decimal pl-5 mb-4 space-y-1">
+                <li>點擊右側的「複製代碼」按鈕。</li>
+                <li>前往您的 GitHub 儲存庫，編輯 <code className="bg-slate-700 text-amber-200 px-1 rounded">index.html</code> 檔案。</li>
+                <li>將開頭的 <code className="bg-slate-700 px-1 rounded">const DEFAULT_VOCAB_DATA = ...</code> 整個區塊取代為下方代碼，並儲存。</li>
+                <li>回到此網頁，點擊上方的<strong className="text-red-400">「🔄 刪除暫存 (同步 GitHub)」</strong>，就能看到真正的最新畫面！</li>
+              </ol>
+
+              <div className="flex justify-end mb-2">
                 <button 
                   onClick={copyToClipboard}
-                  className="bg-blue-500 hover:bg-blue-400 text-white px-4 py-1.5 rounded font-bold text-sm transition-colors"
+                  className="bg-blue-500 hover:bg-blue-400 text-white px-6 py-2 rounded font-bold text-sm transition-colors shadow-sm"
                 >
                   複製代碼
                 </button>
@@ -497,7 +522,7 @@
                 value={exportCode}
                 className="w-full h-64 bg-slate-900 text-green-400 p-4 rounded font-mono text-xs focus:outline-none"
               ></textarea>
-              {copyStatus && <div className="absolute bottom-6 right-6 bg-slate-700 text-white px-4 py-2 rounded shadow-lg font-bold animate-pulse">{copyStatus}</div>}
+              {copyStatus && <div className="absolute bottom-10 right-10 bg-slate-700 text-white px-4 py-2 rounded shadow-lg font-bold animate-pulse">{copyStatus}</div>}
             </div>
           )}
         </div>
@@ -505,28 +530,23 @@
     }
 
     // --- 視圖 0: 首頁 / 登入 ---
-    function HomeView({ onStart, activeVocabList, totalCategoryWords, initialName, selectedUnit, setSelectedUnit, selectedCategory, setSelectedCategory, selectedRange, setSelectedRange }) {
+    function HomeView({ onStart, activeVocabList, totalCategoryWords, initialName, selectedUnit, setSelectedUnit, selectedCategory, setSelectedCategory, selectedRange, setSelectedRange, startIndex }) {
       const [name, setName] = useState(initialName || '');
       const vocabCount = activeVocabList?.length || 0;
       
       const units = ['U1', 'U2', 'U3', 'U4', 'U5', 'U6'];
       const categories = ['全部單字', '對話單字', '主題單字', '閱讀單字'];
       
-      // 動態產生題號範圍按鈕，不受限於 41-50
+      // 動態產生題號範圍按鈕 (保證至少顯示到 50 題，讓老師能明確看見選項)
       const ranges = useMemo(() => {
         const r = ['全部'];
-        const max = Math.ceil(totalCategoryWords / 10) * 10;
+        const maxWords = Math.max(50, totalCategoryWords); // 強制至少產生到 50
+        const max = Math.ceil(maxWords / 10) * 10;
         for (let i = 0; i < max; i += 10) {
           r.push(`${i + 1}-${i + 10}`);
         }
         return r;
       }, [totalCategoryWords]);
-
-      // 為了讓預覽區的標號真實對應學生選的範圍
-      let startIndexForPreview = 0;
-      if (selectedRange !== '全部') {
-          startIndexForPreview = parseInt(selectedRange.split('-')[0], 10) - 1;
-      }
 
       return (
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-indigo-500 w-full max-w-2xl mx-auto">
@@ -602,7 +622,7 @@
                   <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
                     {activeVocabList.map((v, idx) => (
                       <li key={v.id} className="text-sm flex justify-between border-b border-slate-100 pb-1">
-                        <span className="font-bold text-slate-700">{startIndexForPreview + idx + 1}. {v.word}</span>
+                        <span className="font-bold text-slate-700">{startIndex + idx + 1}. {v.word}</span>
                         <span className="text-slate-500">{v.meaning}</span>
                       </li>
                     ))}
@@ -639,7 +659,7 @@
     }
 
     // --- 視圖 1: 單字閃示卡 ---
-    function Task1Flashcards({ vocabList, onComplete }) {
+    function Task1Flashcards({ vocabList, startIndex, onComplete }) {
       const [currentIndex, setCurrentIndex] = useState(0);
       const [playbackRate, setPlaybackRate] = useState(0.9);
       const currentWord = vocabList[currentIndex];
@@ -664,7 +684,9 @@
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-blue-500 w-full">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-bold text-blue-700">T1. 單字閃示卡</h2>
-            <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-semibold">{currentIndex + 1} / {vocabList.length}</span>
+            <span className="bg-blue-100 text-blue-800 px-4 py-1 rounded-full text-sm font-bold shadow-sm">
+              單字編號：{startIndex + currentIndex + 1}
+            </span>
           </div>
           <p className="text-slate-600 mb-6 text-center text-lg">聽發音並觀看字義，準備好後點擊完成進入下一關！</p>
           
@@ -679,7 +701,10 @@
               />
             )}
 
-            <div className="text-5xl md:text-7xl font-bold text-slate-800 mb-4 tracking-wider">{currentWord?.word}</div>
+            <div className="text-5xl md:text-7xl font-bold text-slate-800 mb-4 tracking-wider flex items-center justify-center gap-4">
+              <span className="text-3xl text-slate-300 select-none">{startIndex + currentIndex + 1}.</span>
+              {currentWord?.word}
+            </div>
             <div className="text-slate-500 text-2xl mb-2">{currentWord?.meaning}</div>
             <div className="text-xs text-blue-400 font-bold px-2 py-1 bg-blue-50 rounded mb-4 border border-blue-100">{currentWord?.category}</div>
             
@@ -743,7 +768,7 @@
     }
 
     // --- 視圖 2: 單字紅綠燈 ---
-    function Task2TrafficLight({ vocabList, initialData, onComplete }) {
+    function Task2TrafficLight({ vocabList, startIndex, initialData, onComplete }) {
       const [evaluations, setEvaluations] = useState(initialData || {});
       
       const handleEval = (id, status) => {
@@ -773,10 +798,13 @@
             </div>
           </div>
           <div className="space-y-3 mb-8">
-            {vocabList.map(vocab => (
+            {vocabList.map((vocab, index) => (
               <div key={vocab.id} className="flex items-center justify-between p-3 md:p-4 bg-slate-50 rounded-xl border border-slate-200 hover:shadow-sm transition-shadow">
                 <div className="flex flex-col md:flex-row md:items-baseline gap-1 md:gap-4 flex-1">
-                  <span className="font-bold text-lg text-slate-800 w-32">{vocab.word}</span>
+                  <span className="font-bold text-lg text-slate-800 w-40">
+                    <span className="text-slate-400 mr-2 text-sm">{startIndex + index + 1}.</span>
+                    {vocab.word}
+                  </span>
                   <span className="text-slate-500">{vocab.meaning}</span>
                 </div>
                 <div className="flex gap-2">
@@ -794,7 +822,7 @@
     }
 
     // --- 視圖 3: 單字乒乓賽 ---
-    function Task3PingPong({ vocabList, completedLevels, onLevelComplete, onCompleteAll }) {
+    function Task3PingPong({ vocabList, startIndex, completedLevels, onLevelComplete, onCompleteAll }) {
       const [selectedLevel, setSelectedLevel] = useState(null);
       const [currentWordIndex, setCurrentWordIndex] = useState(0);
       const [options, setOptions] = useState([]);
@@ -954,8 +982,10 @@
           <div className="flex justify-between items-baseline mb-2">
             <h2 className={`text-2xl font-bold ${levelInfo[selectedLevel].color}`}>T3. {levelInfo[selectedLevel].title}</h2>
             <div className="flex items-center gap-3 md:gap-6">
-              <span className="text-slate-500 font-bold text-sm">Word {currentWordIndex + 1} / {vocabList.length}</span>
-              <button onClick={() => setSelectedLevel(null)} className="text-sm bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg transition-colors font-bold shadow-sm">
+              <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full font-bold text-sm shadow-sm border border-slate-200">
+                單字編號：{startIndex + currentWordIndex + 1}
+              </span>
+              <button onClick={() => setSelectedLevel(null)} className="text-sm bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-3 py-1.5 rounded-lg transition-colors font-bold border border-indigo-200">
                 🔙 回選單
               </button>
             </div>
@@ -993,7 +1023,7 @@
     }
 
     // --- 視圖 4: 學習歷程輸出 ---
-    function Task4Export({ vocabList, studentName, trackingData, setCurrentView, selectedUnit, selectedCategory, selectedRange }) {
+    function Task4Export({ vocabList, startIndex, studentName, trackingData, setCurrentView, selectedUnit, selectedCategory, selectedRange }) {
       const totalWords = vocabList.length;
       
       const t1Done = trackingData.t1Completed;
@@ -1022,7 +1052,7 @@
           </div>
           
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 text-center">
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200"><div className="text-sm text-slate-500 mb-1">單字總數</div><div className="text-2xl font-bold text-slate-800">{totalWords}</div></div>
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200"><div className="text-sm text-slate-500 mb-1">任務單字數</div><div className="text-2xl font-bold text-slate-800">{totalWords}</div></div>
             <div className="bg-blue-50 p-4 rounded-xl border border-blue-200"><div className="text-sm text-blue-600 mb-1">閃示卡完成度(T1)</div><div className="text-2xl font-bold text-blue-800">{t1Percent}%</div></div>
             <div className="bg-green-50 p-4 rounded-xl border border-green-200"><div className="text-sm text-green-600 mb-1">綠燈掌握度(T2)</div><div className="text-2xl font-bold text-green-800">{greenPercent}%</div></div>
             <div className="bg-purple-50 p-4 rounded-xl border border-purple-200"><div className="text-sm text-purple-600 mb-1">聽說綜合(T3)</div><div className="text-2xl font-bold text-purple-800">{t3Percent}%</div></div>
@@ -1049,8 +1079,11 @@
                   return (
                     <tr key={vocab.id} className={`border-b border-slate-200 ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
                       <td className="p-3">
-                        <div className="font-bold text-slate-800">{vocab.word}</div>
-                        <div className="text-slate-500 text-sm">({vocab.meaning})</div>
+                        <div className="font-bold text-slate-800 flex items-center gap-2">
+                          <span className="text-slate-400 text-sm">{startIndex + index + 1}.</span>
+                          {vocab.word}
+                        </div>
+                        <div className="text-slate-500 text-sm ml-6">({vocab.meaning})</div>
                       </td>
                       <td className="p-3 text-center">{light === 'green' ? <span className="text-green-500 font-bold">🟢 綠燈</span> : light === 'red' ? <span className="text-red-500 font-bold">🔴 紅燈</span> : '-'}</td>
                       <td className="p-3 text-center text-indigo-600 font-bold">{allDone ? '✔️ 已完成' : '進行中'}</td>

@@ -18,6 +18,20 @@
       body { background: white !important; }
       .shadow-lg, .shadow-xl { box-shadow: none !important; border: 1px solid #e2e8f0; }
     }
+    
+    /* 載入動畫 */
+    .loader {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #4f46e5;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
@@ -26,63 +40,17 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
 
-    // --- 預設單字庫 (支援 U1~U6 與分類) ---
+    // --- 預設單字庫 (當雲端沒資料時的預設值) ---
     const DEFAULT_VOCAB_DATA = {
       "U1": [
-        {
-          "id": 1,
-          "category": "主題單字",
-          "word": "architect",
-          "meaning": "建築師",
-          "image": "",
-          "audio": ""
-        },
-        {
-          "id": 2,
-          "category": "主題單字",
-          "word": "vocabulary",
-          "meaning": "字彙",
-          "image": "",
-          "audio": ""
-        },
-        {
-          "id": 3,
-          "category": "對話單字",
-          "word": "interactive",
-          "meaning": "互動的",
-          "image": "",
-          "audio": ""
-        },
-        {
-          "id": 4,
-          "category": "對話單字",
-          "word": "education",
-          "meaning": "教育",
-          "image": "",
-          "audio": ""
-        },
-        {
-          "id": 5,
-          "category": "閱讀單字",
-          "word": "student",
-          "meaning": "學生",
-          "image": "",
-          "audio": ""
-        },
-        {
-          "id": 6,
-          "category": "閱讀單字",
-          "word": "computer",
-          "meaning": "電腦",
-          "image": "",
-          "audio": ""
-        }
+        { "id": 1, "category": "主題單字", "word": "architect", "meaning": "建築師", "image": "", "audio": "" },
+        { "id": 2, "category": "主題單字", "word": "vocabulary", "meaning": "字彙", "image": "", "audio": "" },
+        { "id": 3, "category": "對話單字", "word": "interactive", "meaning": "互動的", "image": "", "audio": "" },
+        { "id": 4, "category": "對話單字", "word": "education", "meaning": "教育", "image": "", "audio": "" },
+        { "id": 5, "category": "閱讀單字", "word": "student", "meaning": "學生", "image": "", "audio": "" },
+        { "id": 6, "category": "閱讀單字", "word": "computer", "meaning": "電腦", "image": "", "audio": "" }
       ],
-      "U2": [],
-      "U3": [],
-      "U4": [],
-      "U5": [],
-      "U6": []
+      "U2": [], "U3": [], "U4": [], "U5": [], "U6": []
     };
 
     // --- 共用工具函式 ---
@@ -114,14 +82,116 @@
       const [currentView, setCurrentView] = useState('home');
       const [studentName, setStudentName] = useState('');
       
-      // 全局資料狀態：存儲 U1~U6 的所有單字
-      const [allVocabData, setAllVocabData] = useState(() => {
+      // 密碼驗證狀態
+      const [showPwdPrompt, setShowPwdPrompt] = useState(false);
+      const [pwdInput, setPwdInput] = useState('');
+      const [isTeacherAuthenticated, setIsTeacherAuthenticated] = useState(false);
+      
+      // Firebase 相關狀態
+      const [fbAPI, setFbAPI] = useState(null);
+      const [user, setUser] = useState(null);
+      const [allVocabData, setAllVocabData] = useState(null); // null 表示載入中
+      const [isSaving, setIsSaving] = useState(false);
+
+      // --- 1. 動態載入 Firebase 模組 ---
+      useEffect(() => {
+        const loadFirebase = async () => {
+          try {
+            // 修正 Babel 編譯問題：使用 native 原生載入來避免 import() 被轉譯成 require()
+            const nativeImport = new Function('url', 'return import(url)');
+            const [appMod, authMod, fsMod] = await Promise.all([
+              nativeImport('https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js'),
+              nativeImport('https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js'),
+              nativeImport('https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js')
+            ]);
+            setFbAPI({ ...appMod, ...authMod, ...fsMod });
+          } catch (err) {
+            console.error("無法載入 Firebase 模組", err);
+            setAllVocabData(DEFAULT_VOCAB_DATA); // 載入失敗時降級使用本地資料
+          }
+        };
+        loadFirebase();
+      }, []);
+
+      // --- 2. 初始化 Firebase Auth ---
+      useEffect(() => {
+        if (!fbAPI) return;
+        
+        const initAuth = async () => {
+          try {
+            const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
+            const config = JSON.parse(configStr);
+            
+            if (Object.keys(config).length === 0) {
+              // 找不到設定檔，降級使用本地端資料
+              setAllVocabData(DEFAULT_VOCAB_DATA);
+              return;
+            }
+
+            const app = fbAPI.initializeApp(config);
+            const auth = fbAPI.getAuth(app);
+            window.db = fbAPI.getFirestore(app);
+
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+              await fbAPI.signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+              await fbAPI.signInAnonymously(auth);
+            }
+
+            fbAPI.onAuthStateChanged(auth, setUser);
+          } catch (err) {
+            console.error("驗證失敗:", err);
+            setAllVocabData(DEFAULT_VOCAB_DATA);
+          }
+        };
+        initAuth();
+      }, [fbAPI]);
+
+      // --- 3. 監聽 Firestore 即時資料 ---
+      useEffect(() => {
+        if (!user || !window.db || !fbAPI) return;
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const docRef = fbAPI.doc(window.db, 'artifacts', appId, 'public', 'data', 'vocabulary', 'dictionary');
+
+        const unsubscribe = fbAPI.onSnapshot(docRef, (snapshot) => {
+          if (snapshot.exists()) {
+            setAllVocabData(snapshot.data());
+          } else {
+            // 資料庫是空的，自動寫入預設資料
+            fbAPI.setDoc(docRef, DEFAULT_VOCAB_DATA);
+            setAllVocabData(DEFAULT_VOCAB_DATA);
+          }
+        }, (error) => {
+          console.error("讀取即時資料失敗:", error);
+          setAllVocabData(DEFAULT_VOCAB_DATA);
+        });
+
+        return () => unsubscribe();
+      }, [user, fbAPI]);
+
+      // --- 儲存資料至雲端 ---
+      const saveVocabList = async (newData) => {
+        setIsSaving(true);
         try {
-          const saved = localStorage.getItem('vocabArchitectMultiUnit');
-          if (saved) return JSON.parse(saved);
-        } catch (e) { console.error('無法讀取本地資料'); }
-        return DEFAULT_VOCAB_DATA;
-      });
+          if (window.db && fbAPI) {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const docRef = fbAPI.doc(window.db, 'artifacts', appId, 'public', 'data', 'vocabulary', 'dictionary');
+            await fbAPI.setDoc(docRef, newData);
+            alert("✅ 資料已成功儲存至雲端，學生畫面將自動同步更新！");
+          } else {
+            // 本地測試模式降級
+            setAllVocabData(newData);
+            alert("⚠️ 目前為本地測試模式，資料僅儲存於您的瀏覽器。");
+          }
+          setCurrentView('home');
+        } catch (e) {
+          console.error('儲存失敗', e);
+          alert("❌ 儲存失敗，請確認網路狀態。");
+        } finally {
+          setIsSaving(false);
+        }
+      };
 
       // 學生選擇的單元、分類與題號範圍
       const [selectedUnit, setSelectedUnit] = useState('U1');
@@ -130,6 +200,7 @@
 
       // 1. 先依單元與分類過濾出基礎清單
       const baseVocabList = useMemo(() => {
+        if (!allVocabData) return [];
         const list = allVocabData[selectedUnit] || [];
         if (selectedCategory !== '全部單字') {
           return list.filter(v => v.category === selectedCategory);
@@ -137,12 +208,12 @@
         return list;
       }, [allVocabData, selectedUnit, selectedCategory]);
 
-      // 當單元或分類改變時，自動重置題號範圍為「全部」，避免範圍溢出導致找不到單字
+      // 當單元或分類改變時，自動重置題號範圍為「全部」
       useEffect(() => {
         setSelectedRange('全部');
       }, [selectedUnit, selectedCategory]);
 
-      // 計算真實的起始編號 (讓子元件能顯示如 第 11 題)
+      // 計算真實的起始編號
       const startIndex = useMemo(() => {
         if (selectedRange === '全部') return 0;
         return parseInt(selectedRange.split('-')[0], 10) - 1;
@@ -153,7 +224,7 @@
         if (selectedRange !== '全部') {
           const parts = selectedRange.split('-');
           if (parts.length === 2) {
-            const start = parseInt(parts[0], 10) - 1; // 陣列索引從 0 開始
+            const start = parseInt(parts[0], 10) - 1;
             const end = parseInt(parts[1], 10);
             return baseVocabList.slice(start, end);
           }
@@ -168,20 +239,12 @@
         usedForcePass: false
       });
 
-      const saveVocabList = (newData) => {
-        setAllVocabData(newData);
-        try {
-          localStorage.setItem('vocabArchitectMultiUnit', JSON.stringify(newData));
-        } catch (e) { console.error('無法儲存本地資料'); }
-      };
-
       const updateTracking = (key, value) => {
         setTrackingData(prev => ({ ...prev, [key]: value }));
       };
 
       const handleStart = (name) => {
         setStudentName(name);
-        // 每次開始新任務時重置追蹤進度
         setTrackingData({
           t1Completed: false,
           t2TrafficLights: {},
@@ -191,12 +254,33 @@
         setCurrentView('t1');
       };
 
+      const handleTeacherLogin = () => {
+        if (pwdInput === '1234') {
+          setIsTeacherAuthenticated(true);
+          setShowPwdPrompt(false);
+          setPwdInput('');
+          setCurrentView('teacher');
+        } else {
+          alert('密碼錯誤！請輸入 1234');
+          setPwdInput('');
+        }
+      };
+
+      // --- 畫面載入中判定 ---
+      if (!allVocabData) {
+        return (
+          <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center">
+             <div className="loader mb-4"></div>
+             <p className="text-xl font-bold text-indigo-600">正在連接雲端資料庫...</p>
+          </div>
+        );
+      }
+
       const renderView = () => {
         switch (currentView) {
           case 'home':
             return <HomeView 
                       onStart={handleStart} 
-                      onEdit={() => setCurrentView('teacher')} 
                       activeVocabList={activeVocabList} 
                       totalCategoryWords={baseVocabList.length}
                       initialName={studentName}
@@ -211,8 +295,8 @@
           case 'teacher':
             return <TeacherEditView 
                       allVocabData={allVocabData} 
-                      onSave={(newData) => { saveVocabList(newData); setCurrentView('home'); }} 
-                      onUpdateLocal={(newData) => { saveVocabList(newData); }}
+                      onSave={saveVocabList} 
+                      isSaving={isSaving}
                       onCancel={() => setCurrentView('home')} 
                    />;
           case 't1':
@@ -245,20 +329,23 @@
                       selectedRange={selectedRange}
                    />;
           default:
-            return <HomeView onStart={handleStart} onEdit={() => setCurrentView('teacher')} activeVocabList={activeVocabList} totalCategoryWords={baseVocabList.length} initialName={studentName} selectedUnit={selectedUnit} setSelectedUnit={setSelectedUnit} selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory} selectedRange={selectedRange} setSelectedRange={setSelectedRange} startIndex={startIndex} />;
+            return null;
         }
       };
 
       return (
-        <div className="min-h-screen bg-slate-50 font-sans text-slate-800 selection:bg-blue-200 flex flex-col">
-          <nav className="bg-indigo-600 text-white p-4 shadow-md print:hidden shrink-0">
+        <div className="min-h-screen bg-slate-50 font-sans text-slate-800 selection:bg-blue-200 flex flex-col relative">
+          <nav className="bg-indigo-600 text-white p-4 shadow-md print:hidden shrink-0 z-10">
             <div className="max-w-6xl mx-auto flex justify-between items-center">
               <h1 className="text-xl font-bold flex items-center gap-2 cursor-pointer" onClick={() => setCurrentView('home')}>
                 <span className="text-2xl">🏛️</span> 英文建築師
               </h1>
               <div className="flex items-center gap-4 text-sm">
                 {currentView !== 'teacher' && (
-                  <button onClick={() => setCurrentView('teacher')} className="bg-indigo-500 hover:bg-indigo-400 px-3 py-1 rounded text-xs transition-colors shadow-sm">
+                  <button 
+                    onClick={() => isTeacherAuthenticated ? setCurrentView('teacher') : setShowPwdPrompt(true)} 
+                    className="bg-indigo-500 hover:bg-indigo-400 px-3 py-1 rounded text-xs transition-colors shadow-sm font-bold"
+                  >
                     ✏️ 老師編輯區
                   </button>
                 )}
@@ -287,6 +374,30 @@
               {renderView()}
             </main>
           </div>
+
+          {/* --- 老師密碼輸入彈窗 --- */}
+          {showPwdPrompt && (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+              <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center">
+                <div className="text-4xl mb-4">🔐</div>
+                <h3 className="text-2xl font-bold mb-2 text-slate-800">老師身分驗證</h3>
+                <p className="text-slate-500 mb-6 text-sm">請輸入管理密碼進入編輯區。<br/>(預設密碼：1234)</p>
+                <input 
+                  type="password" 
+                  value={pwdInput} 
+                  onChange={e => setPwdInput(e.target.value)} 
+                  onKeyDown={e => e.key === 'Enter' && handleTeacherLogin()}
+                  className="w-full border-2 border-slate-300 p-3 rounded-xl mb-6 text-center text-xl tracking-widest focus:outline-none focus:border-indigo-500" 
+                  placeholder="••••"
+                  autoFocus
+                />
+                <div className="flex gap-3 justify-end">
+                  <button onClick={() => setShowPwdPrompt(false)} className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors">取消</button>
+                  <button onClick={handleTeacherLogin} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors shadow-md">登入</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -339,13 +450,11 @@
       );
     }
 
-    // --- 視圖: 教師編輯區 ---
-    function TeacherEditView({ allVocabData, onSave, onUpdateLocal, onCancel }) {
+    // --- 視圖: 教師編輯區 (已移除繁瑣的 GitHub 匯出，改為直接儲存雲端) ---
+    function TeacherEditView({ allVocabData, onSave, isSaving, onCancel }) {
       const [editUnit, setEditUnit] = useState('U1');
       const [inputText, setInputText] = useState("");
       const [error, setError] = useState("");
-      const [exportCode, setExportCode] = useState("");
-      const [copyStatus, setCopyStatus] = useState("");
 
       // 當切換單元時，載入該單元的資料並轉為文字格式
       useEffect(() => {
@@ -358,7 +467,6 @@
         }).join('\n');
         setInputText(textFormat);
         setError("");
-        setExportCode(""); // 切換時清空匯出代碼
       }, [editUnit, allVocabData]);
 
       // 解析輸入框內容的共用函數
@@ -405,47 +513,13 @@
 
       const handleSave = () => {
         const newData = parseInput();
-        if (newData) onSave(newData); // 儲存並跳回首頁
-      };
-
-      // 產生給 GitHub 使用的程式碼 (不再自動跳轉回首頁)
-      const handleExportCode = () => {
-        const newData = parseInput();
-        if (newData) {
-          const jsonString = JSON.stringify(newData, null, 2);
-          const finalCode = `    // --- 預設單字庫 (支援 U1~U6 與分類) ---\n    const DEFAULT_VOCAB_DATA = ${jsonString};`;
-          setExportCode(finalCode);
-          setCopyStatus("");
-          // 更新本地狀態以免遺失資料，但不跳轉畫面
-          if(onUpdateLocal) onUpdateLocal(newData);
-        }
-      };
-
-      const handleClearCache = () => {
-        if(window.confirm("⚠️ 警告：這將會清除您「瀏覽器上」的暫存測試資料！\n\n如果您已經把剛才產生的代碼更新到 GitHub 上，請點擊「確定」來重新載入 GitHub 上最新的正式資料！")) {
-          localStorage.removeItem('vocabArchitectMultiUnit');
-          window.location.reload();
-        }
-      };
-
-      const copyToClipboard = () => {
-        try {
-          const textArea = document.createElement("textarea");
-          textArea.value = exportCode;
-          document.body.appendChild(textArea);
-          textArea.select();
-          document.execCommand("copy");
-          document.body.removeChild(textArea);
-          setCopyStatus("✅ 代碼複製成功！請依照左方說明至 GitHub 更新檔案！");
-        } catch (err) {
-          setCopyStatus("❌ 複製失敗，請手動全選複製");
-        }
+        if (newData) onSave(newData); // 直接呼叫父層的儲存(上傳雲端)
       };
 
       return (
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-indigo-500 w-full">
           <h2 className="text-2xl font-bold text-indigo-700 mb-6 flex items-center gap-2">
-            ✏️ 資料編輯區 (Teacher Editor)
+            ✏️ 資料編輯區 (雲端即時同步)
           </h2>
 
           <div className="flex gap-2 overflow-x-auto mb-6 pb-2">
@@ -460,16 +534,14 @@
             ))}
           </div>
 
-          <div className="text-slate-600 mb-4 text-sm bg-slate-50 p-4 rounded border">
-            <p className="font-bold text-indigo-600 mb-2">正在編輯：{editUnit}</p>
+          <div className="text-slate-600 mb-4 text-sm bg-indigo-50 p-4 rounded border border-indigo-100">
+            <p className="font-bold text-indigo-700 mb-2">正在編輯：{editUnit}</p>
             請在下方貼上本課的單字。每行一個單字，格式支援智慧辨識：<br/>
             <strong>[類別(選填)] | 英文單字 | 中文意思 | 圖片網址 (選填) | 音檔網址 (選填)</strong><br/><br/>
             範例 1 (純文字，預設為主題單字)：<br/>
-            <span className="text-slate-500 font-mono">apple | 蘋果</span><br/>
+            <span className="text-slate-500 font-mono bg-white px-1">apple | 蘋果</span><br/>
             範例 2 (指定分類為對話/主題/閱讀)：<br/>
-            <span className="text-slate-500 font-mono">對話 | banana | 香蕉</span><br/>
-            範例 3 (加入圖片與專屬音檔)：<br/>
-            <span className="text-slate-500 font-mono break-all">閱讀 | cat | 貓咪 | https://...jpg | https://...mp3</span>
+            <span className="text-slate-500 font-mono bg-white px-1">對話 | banana | 香蕉</span>
           </div>
           
           <textarea
@@ -481,50 +553,20 @@
           
           {error && <div className="text-red-500 mb-4 font-bold text-sm bg-red-50 p-2 rounded">{error}</div>}
           
-          <div className="flex flex-col md:flex-row gap-4 mb-6">
-            <button onClick={handleSave} className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg transition-colors shadow-sm">
-              💻 儲存於本機 (僅供自己測試)
+          <div className="flex flex-col md:flex-row gap-4 mt-4">
+            <button 
+              onClick={handleSave} 
+              disabled={isSaving}
+              className={`flex-1 font-bold py-4 rounded-xl transition-all shadow-md flex justify-center items-center gap-2 ${
+                isSaving ? 'bg-slate-400 text-white cursor-not-allowed' : 'bg-green-500 hover:bg-green-600 text-white hover:-translate-y-1'
+              }`}
+            >
+              {isSaving ? <span className="loader !w-6 !h-6 !border-2 !border-t-white"></span> : '☁️ 儲存至雲端 (學生端自動更新)'}
             </button>
-            <button onClick={handleExportCode} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg transition-colors shadow-sm">
-              📜 產生 GitHub 更新碼
-            </button>
-            <button onClick={handleClearCache} className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-lg transition-colors shadow-sm" title="清除本機測試資料，重新載入線上最新設定">
-              🔄 刪除暫存 (同步 GitHub)
-            </button>
-            <button onClick={onCancel} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 px-6 rounded-lg transition-colors">
-              返回
+            <button onClick={onCancel} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-4 px-8 rounded-xl transition-colors">
+              取消並返回
             </button>
           </div>
-
-          {/* 匯出代碼顯示區塊 */}
-          {exportCode && (
-            <div className="mt-8 p-6 bg-slate-800 rounded-xl shadow-inner border-2 border-slate-700 relative">
-              <h3 className="text-amber-400 font-bold text-lg mb-2 flex items-center gap-2">
-                <span>⚠️</span> 如何同步到 GitHub 讓學生看見？(必看教學)
-              </h3>
-              <ol className="text-slate-300 text-sm list-decimal pl-5 mb-4 space-y-1">
-                <li>點擊右側的「複製代碼」按鈕。</li>
-                <li>前往您的 GitHub 儲存庫，編輯 <code className="bg-slate-700 text-amber-200 px-1 rounded">index.html</code> 檔案。</li>
-                <li>將開頭的 <code className="bg-slate-700 px-1 rounded">const DEFAULT_VOCAB_DATA = ...</code> 整個區塊取代為下方代碼，並儲存。</li>
-                <li>回到此網頁，點擊上方的<strong className="text-red-400">「🔄 刪除暫存 (同步 GitHub)」</strong>，就能看到真正的最新畫面！</li>
-              </ol>
-
-              <div className="flex justify-end mb-2">
-                <button 
-                  onClick={copyToClipboard}
-                  className="bg-blue-500 hover:bg-blue-400 text-white px-6 py-2 rounded font-bold text-sm transition-colors shadow-sm"
-                >
-                  複製代碼
-                </button>
-              </div>
-              <textarea 
-                readOnly
-                value={exportCode}
-                className="w-full h-64 bg-slate-900 text-green-400 p-4 rounded font-mono text-xs focus:outline-none"
-              ></textarea>
-              {copyStatus && <div className="absolute bottom-10 right-10 bg-slate-700 text-white px-4 py-2 rounded shadow-lg font-bold animate-pulse">{copyStatus}</div>}
-            </div>
-          )}
         </div>
       );
     }
@@ -537,7 +579,7 @@
       const units = ['U1', 'U2', 'U3', 'U4', 'U5', 'U6'];
       const categories = ['全部單字', '對話單字', '主題單字', '閱讀單字'];
       
-      // 動態產生題號範圍按鈕 (保證至少顯示到 50 題，讓老師能明確看見選項)
+      // 動態產生題號範圍按鈕
       const ranges = useMemo(() => {
         const r = ['全部'];
         const maxWords = Math.max(50, totalCategoryWords); // 強制至少產生到 50

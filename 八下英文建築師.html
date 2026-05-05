@@ -128,28 +128,32 @@
       const [selectedCategory, setSelectedCategory] = useState('全部單字');
       const [selectedRange, setSelectedRange] = useState('全部');
 
-      // 根據選擇過濾出目前要測驗的單字清單
-      const activeVocabList = useMemo(() => {
+      // 1. 先依單元與分類過濾出基礎清單
+      const baseVocabList = useMemo(() => {
         const list = allVocabData[selectedUnit] || [];
-        
-        // 1. 先依分類過濾
-        let filtered = list;
         if (selectedCategory !== '全部單字') {
-          filtered = list.filter(v => v.category === selectedCategory);
+          return list.filter(v => v.category === selectedCategory);
         }
+        return list;
+      }, [allVocabData, selectedUnit, selectedCategory]);
 
-        // 2. 再依題號範圍過濾
+      // 當單元或分類改變時，自動重置題號範圍為「全部」，避免範圍溢出導致找不到單字
+      useEffect(() => {
+        setSelectedRange('全部');
+      }, [selectedUnit, selectedCategory]);
+
+      // 2. 再依題號範圍過濾出最終要測驗的清單
+      const activeVocabList = useMemo(() => {
         if (selectedRange !== '全部') {
           const parts = selectedRange.split('-');
           if (parts.length === 2) {
             const start = parseInt(parts[0], 10) - 1; // 陣列索引從 0 開始
             const end = parseInt(parts[1], 10);
-            filtered = filtered.slice(start, end);
+            return baseVocabList.slice(start, end);
           }
         }
-
-        return filtered;
-      }, [allVocabData, selectedUnit, selectedCategory, selectedRange]);
+        return baseVocabList;
+      }, [baseVocabList, selectedRange]);
 
       const [trackingData, setTrackingData] = useState({
         t1Completed: false,
@@ -188,6 +192,7 @@
                       onStart={handleStart} 
                       onEdit={() => setCurrentView('teacher')} 
                       activeVocabList={activeVocabList} 
+                      totalCategoryWords={baseVocabList.length}
                       initialName={studentName}
                       selectedUnit={selectedUnit}
                       setSelectedUnit={setSelectedUnit}
@@ -230,7 +235,7 @@
                       selectedRange={selectedRange}
                    />;
           default:
-            return <HomeView onStart={handleStart} onEdit={() => setCurrentView('teacher')} activeVocabList={activeVocabList} initialName={studentName} selectedUnit={selectedUnit} setSelectedUnit={setSelectedUnit} selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory} selectedRange={selectedRange} setSelectedRange={setSelectedRange} />;
+            return <HomeView onStart={handleStart} onEdit={() => setCurrentView('teacher')} activeVocabList={activeVocabList} totalCategoryWords={baseVocabList.length} initialName={studentName} selectedUnit={selectedUnit} setSelectedUnit={setSelectedUnit} selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory} selectedRange={selectedRange} setSelectedRange={setSelectedRange} />;
         }
       };
 
@@ -500,13 +505,28 @@
     }
 
     // --- 視圖 0: 首頁 / 登入 ---
-    function HomeView({ onStart, activeVocabList, initialName, selectedUnit, setSelectedUnit, selectedCategory, setSelectedCategory, selectedRange, setSelectedRange }) {
+    function HomeView({ onStart, activeVocabList, totalCategoryWords, initialName, selectedUnit, setSelectedUnit, selectedCategory, setSelectedCategory, selectedRange, setSelectedRange }) {
       const [name, setName] = useState(initialName || '');
       const vocabCount = activeVocabList?.length || 0;
       
       const units = ['U1', 'U2', 'U3', 'U4', 'U5', 'U6'];
       const categories = ['全部單字', '對話單字', '主題單字', '閱讀單字'];
-      const ranges = ['全部', '1-10', '11-20', '21-30', '31-40', '41-50'];
+      
+      // 動態產生題號範圍按鈕，不受限於 41-50
+      const ranges = useMemo(() => {
+        const r = ['全部'];
+        const max = Math.ceil(totalCategoryWords / 10) * 10;
+        for (let i = 0; i < max; i += 10) {
+          r.push(`${i + 1}-${i + 10}`);
+        }
+        return r;
+      }, [totalCategoryWords]);
+
+      // 為了讓預覽區的標號真實對應學生選的範圍
+      let startIndexForPreview = 0;
+      if (selectedRange !== '全部') {
+          startIndexForPreview = parseInt(selectedRange.split('-')[0], 10) - 1;
+      }
 
       return (
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-indigo-500 w-full max-w-2xl mx-auto">
@@ -582,7 +602,7 @@
                   <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
                     {activeVocabList.map((v, idx) => (
                       <li key={v.id} className="text-sm flex justify-between border-b border-slate-100 pb-1">
-                        <span className="font-bold text-slate-700">{idx + 1}. {v.word}</span>
+                        <span className="font-bold text-slate-700">{startIndexForPreview + idx + 1}. {v.word}</span>
                         <span className="text-slate-500">{v.meaning}</span>
                       </li>
                     ))}

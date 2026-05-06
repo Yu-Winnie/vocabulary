@@ -66,19 +66,19 @@
     const UNITS = ['U1', 'U2', 'U3', 'U4', 'U5', 'U6'];
     const CATEGORIES = ['全部單字', '對話單字', '主題單字', '閱讀單字'];
 
-    // --- 預設單字庫 (包含所有版本、冊別與單元) ---
-    const DEFAULT_VOCAB_DATA = VERSIONS.reduce((vAcc, version) => {
+    // --- 預設資料庫：單字 (Vocab) 與 文法 (Grammar) ---
+    const buildEmptyStructure = () => VERSIONS.reduce((vAcc, version) => {
       vAcc[version] = BOOKS.reduce((bAcc, book) => {
-        bAcc[book] = UNITS.reduce((uAcc, unit) => {
-          uAcc[unit] = [];
-          return uAcc;
-        }, {});
+        bAcc[book] = UNITS.reduce((uAcc, unit) => { uAcc[unit] = []; return uAcc; }, {});
         return bAcc;
       }, {});
       return vAcc;
     }, {});
 
-    // 在「康軒 七上 U1」放入預設範例單字
+    const DEFAULT_VOCAB_DATA = buildEmptyStructure();
+    const DEFAULT_GRAMMAR_DATA = buildEmptyStructure();
+
+    // 預設範例資料：單字
     DEFAULT_VOCAB_DATA['康軒']['七上']['U1'] = [
       { "id": 1, "category": "主題單字", "word": "architect", "meaning": "建築師", "image": "", "audio": "" },
       { "id": 2, "category": "主題單字", "word": "vocabulary", "meaning": "字彙", "image": "", "audio": "" },
@@ -86,6 +86,13 @@
       { "id": 4, "category": "對話單字", "word": "education", "meaning": "教育", "image": "", "audio": "" },
       { "id": 5, "category": "閱讀單字", "word": "student", "meaning": "學生", "image": "", "audio": "" },
       { "id": 6, "category": "閱讀單字", "word": "computer", "meaning": "電腦", "image": "", "audio": "" }
+    ];
+
+    // 預設範例資料：文法
+    DEFAULT_GRAMMAR_DATA['康軒']['七上']['U1'] = [
+      { "id": 1, "question": "How ___ you doing today?", "options": ["is", "am", "are", "be"], "answer": "are", "explanation": "主詞為 you 時，搭配的 be 動詞必須是 are。" },
+      { "id": 2, "question": "I ___ a junior high school student.", "options": ["is", "am", "are", "be"], "answer": "am", "explanation": "主詞為 I 時，搭配的 be 動詞必須是 am。" },
+      { "id": 3, "question": "___ that your new pen?", "options": ["Is", "Am", "Are", "Be"], "answer": "Is", "explanation": "主詞 that 為第三人稱單數，be 動詞須用 Is。" }
     ];
 
     // --- 共用工具函式 ---
@@ -124,21 +131,21 @@
       
       // Firebase 相關狀態
       const [user, setUser] = useState(null);
-      const [allVocabData, setAllVocabData] = useState(null); // null 表示載入中
+      const [allVocabData, setAllVocabData] = useState(null); 
+      const [allGrammarData, setAllGrammarData] = useState(null); 
       const [isSaving, setIsSaving] = useState(false);
 
       // --- 1. 傳統方式初始化 Firebase ---
       useEffect(() => {
         const initFirebase = async () => {
           try {
-            // 檢查 Firebase 是否成功載入（若被擋廣告軟體阻擋，自動降級）
             if (typeof firebase === 'undefined') {
               console.warn("無法載入 Firebase 核心套件，降級為本地模式。");
               setAllVocabData(DEFAULT_VOCAB_DATA);
+              setAllGrammarData(DEFAULT_GRAMMAR_DATA);
               return;
             }
 
-            // 避免重複初始化
             if (!firebase.apps.length) {
               firebase.initializeApp(USER_FIREBASE_CONFIG);
             }
@@ -146,74 +153,71 @@
             const auth = firebase.auth();
             window.db = firebase.firestore();
 
-            // 匿名登入
             await auth.signInAnonymously();
-            
-            auth.onAuthStateChanged((u) => {
-              setUser(u);
-            });
+            auth.onAuthStateChanged((u) => { setUser(u); });
           } catch (err) {
             console.error("驗證或初始化失敗:", err);
-            // 發生錯誤也確保網頁不會空白
             setAllVocabData(DEFAULT_VOCAB_DATA);
+            setAllGrammarData(DEFAULT_GRAMMAR_DATA);
           }
         };
         initFirebase();
       }, []);
 
-      // --- 2. 監聽 Firestore 即時資料 ---
+      // --- 2. 監聽 Firestore 即時資料 (單字與文法) ---
       useEffect(() => {
         if (!user || !window.db) return;
 
-        // 連接到您的資料庫路徑
-        const docRef = window.db.collection('vocabulary').doc('dictionary');
+        const vocabRef = window.db.collection('vocabulary').doc('dictionary');
+        const grammarRef = window.db.collection('vocabulary').doc('grammar');
 
-        const unsubscribe = docRef.onSnapshot((snapshot) => {
+        const unsubVocab = vocabRef.onSnapshot((snapshot) => {
           if (snapshot.exists) {
             let data = snapshot.data();
-            // --- 資料庫相容性處理 (舊版資料自動升級) ---
+            // 相容性處理
             if (data && data['U1'] && !data['七上'] && !data['康軒']) {
-              // 這是最舊的結構 (只有 U1~U6) -> 移到 康軒 -> 七上
               const migratedData = JSON.parse(JSON.stringify(DEFAULT_VOCAB_DATA));
-              migratedData['康軒']['七上'] = data;
-              data = migratedData;
+              migratedData['康軒']['七上'] = data; data = migratedData;
             } else if (data && data['七上'] && !data['康軒']) {
-              // 這是上一版的結構 (只有冊別) -> 移到 康軒
               const migratedData = JSON.parse(JSON.stringify(DEFAULT_VOCAB_DATA));
-              migratedData['康軒'] = data;
-              data = migratedData;
+              migratedData['康軒'] = data; data = migratedData;
             }
             setAllVocabData(data);
           } else {
-            // 資料庫是空的，自動寫入預設資料
-            docRef.set(DEFAULT_VOCAB_DATA);
+            vocabRef.set(DEFAULT_VOCAB_DATA);
             setAllVocabData(DEFAULT_VOCAB_DATA);
           }
-        }, (error) => {
-          console.error("讀取即時資料失敗:", error);
-          setAllVocabData(DEFAULT_VOCAB_DATA);
         });
 
-        return () => unsubscribe();
+        const unsubGrammar = grammarRef.onSnapshot((snapshot) => {
+          if (snapshot.exists) {
+            setAllGrammarData(snapshot.data());
+          } else {
+            grammarRef.set(DEFAULT_GRAMMAR_DATA);
+            setAllGrammarData(DEFAULT_GRAMMAR_DATA);
+          }
+        });
+
+        return () => { unsubVocab(); unsubGrammar(); };
       }, [user]);
 
-      // --- 儲存資料至雲端 ---
-      const saveVocabList = async (newData) => {
+      // --- 儲存資料至雲端 (支援單字與文法) ---
+      const saveDataToCloud = async (newData, dataType) => {
         setIsSaving(true);
         try {
           if (window.db) {
-            const docRef = window.db.collection('vocabulary').doc('dictionary');
+            const docName = dataType === 'vocab' ? 'dictionary' : 'grammar';
+            const docRef = window.db.collection('vocabulary').doc(docName);
             await docRef.set(newData);
-            alert("✅ 資料已成功儲存至雲端，學生畫面將自動同步更新！");
+            alert(`✅ ${dataType === 'vocab' ? '單字' : '文法'}資料已成功儲存至雲端！`);
           } else {
-            // 本地測試模式降級
-            setAllVocabData(newData);
+            if (dataType === 'vocab') setAllVocabData(newData);
+            else setAllGrammarData(newData);
             alert("⚠️ 目前無法連線雲端，資料僅暫存於您的瀏覽器。");
           }
-          setCurrentView('home');
         } catch (e) {
           console.error('儲存失敗', e);
-          alert("❌ 儲存失敗！請確認 Firebase 的「Authentication -> 匿名登入」已啟用，且「Firestore -> 規則 (Rules)」已設為測試模式！");
+          alert("❌ 儲存失敗！請確認 Firebase 權限。");
         } finally {
           setIsSaving(false);
         }
@@ -226,47 +230,43 @@
       const [selectedCategory, setSelectedCategory] = useState('全部單字');
       const [selectedRange, setSelectedRange] = useState('全部');
 
-      // 1. 先依版本、冊別、單元與分類過濾出基礎清單
-      const baseVocabList = useMemo(() => {
-        if (!allVocabData) return [];
-        const versionData = allVocabData[selectedVersion] || {};
-        const bookData = versionData[selectedBook] || {};
-        const list = bookData[selectedUnit] || [];
-        if (selectedCategory !== '全部單字') {
-          return list.filter(v => v.category === selectedCategory);
-        }
-        return list;
-      }, [allVocabData, selectedVersion, selectedBook, selectedUnit, selectedCategory]);
-
-      // 當版本、冊別、單元或分類改變時，自動重置題號範圍為「全部」
-      useEffect(() => {
-        setSelectedRange('全部');
-      }, [selectedVersion, selectedBook, selectedUnit, selectedCategory]);
-
-      // 計算真實的起始編號
-      const startIndex = useMemo(() => {
-        if (selectedRange === '全部') return 0;
-        return parseInt(selectedRange.split('-')[0], 10) - 1;
-      }, [selectedRange]);
-
-      // 2. 再依題號範圍過濾出最終要測驗的清單
+      // 過濾出目前選擇的「單字清單」
       const activeVocabList = useMemo(() => {
+        if (!allVocabData) return [];
+        let list = allVocabData[selectedVersion]?.[selectedBook]?.[selectedUnit] || [];
+        if (selectedCategory !== '全部單字') {
+          list = list.filter(v => v.category === selectedCategory);
+        }
         if (selectedRange !== '全部') {
           const parts = selectedRange.split('-');
           if (parts.length === 2) {
             const start = parseInt(parts[0], 10) - 1;
             const end = parseInt(parts[1], 10);
-            return baseVocabList.slice(start, end);
+            return list.slice(start, end);
           }
         }
-        return baseVocabList;
-      }, [baseVocabList, selectedRange]);
+        return list;
+      }, [allVocabData, selectedVersion, selectedBook, selectedUnit, selectedCategory, selectedRange]);
+
+      // 取得目前選擇的「文法清單」
+      const activeGrammarList = useMemo(() => {
+        if (!allGrammarData) return [];
+        // 文法不套用「範圍」與「分類」，只要單元對了就全部載入
+        return allGrammarData[selectedVersion]?.[selectedBook]?.[selectedUnit] || [];
+      }, [allGrammarData, selectedVersion, selectedBook, selectedUnit]);
+
+      // 當切換條件時重置自訂範圍
+      useEffect(() => { setSelectedRange('全部'); }, [selectedVersion, selectedBook, selectedUnit, selectedCategory]);
+
+      const startIndex = useMemo(() => selectedRange === '全部' ? 0 : parseInt(selectedRange.split('-')[0], 10) - 1, [selectedRange]);
 
       const [trackingData, setTrackingData] = useState({
         t1Completed: false,
         t2TrafficLights: {},
         t3CompletedLevels: [],
-        usedForcePass: false
+        usedForcePass: false,
+        t4Completed: false, // 文法測驗完成狀態
+        t4Score: 0          // 文法測驗得分
       });
 
       const updateTracking = (key, value) => {
@@ -279,7 +279,9 @@
           t1Completed: false,
           t2TrafficLights: {},
           t3CompletedLevels: [],
-          usedForcePass: false
+          usedForcePass: false,
+          t4Completed: false,
+          t4Score: 0
         });
         setCurrentView('t1');
       };
@@ -296,13 +298,11 @@
         }
       };
 
-      // --- 畫面載入中判定 ---
-      if (!allVocabData) {
+      if (!allVocabData || !allGrammarData) {
         return (
           <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center">
              <div className="loader mb-4"></div>
              <p className="text-xl font-bold text-indigo-600 mt-4">正在連接雲端資料庫...</p>
-             <p className="text-slate-500 mt-2 text-sm">如果一直停留在這，請重新整理網頁</p>
           </div>
         );
       }
@@ -313,24 +313,21 @@
             return <HomeView 
                       onStart={handleStart} 
                       activeVocabList={activeVocabList} 
-                      totalCategoryWords={baseVocabList.length}
+                      totalCategoryWords={(allVocabData[selectedVersion]?.[selectedBook]?.[selectedUnit] || []).length}
+                      grammarCount={activeGrammarList.length}
                       initialName={studentName}
-                      selectedVersion={selectedVersion}
-                      setSelectedVersion={setSelectedVersion}
-                      selectedBook={selectedBook}
-                      setSelectedBook={setSelectedBook}
-                      selectedUnit={selectedUnit}
-                      setSelectedUnit={setSelectedUnit}
-                      selectedCategory={selectedCategory}
-                      setSelectedCategory={setSelectedCategory}
-                      selectedRange={selectedRange}
-                      setSelectedRange={setSelectedRange}
+                      selectedVersion={selectedVersion} setSelectedVersion={setSelectedVersion}
+                      selectedBook={selectedBook} setSelectedBook={setSelectedBook}
+                      selectedUnit={selectedUnit} setSelectedUnit={setSelectedUnit}
+                      selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory}
+                      selectedRange={selectedRange} setSelectedRange={setSelectedRange}
                       startIndex={startIndex}
                    />;
           case 'teacher':
             return <TeacherEditView 
                       allVocabData={allVocabData} 
-                      onSave={saveVocabList} 
+                      allGrammarData={allGrammarData}
+                      onSave={saveDataToCloud} 
                       isSaving={isSaving}
                       onCancel={() => setCurrentView('home')} 
                    />;
@@ -339,32 +336,15 @@
           case 't2':
             return <Task2TrafficLight vocabList={activeVocabList} startIndex={startIndex} initialData={trackingData.t2TrafficLights} onComplete={(data, isFinal) => { updateTracking('t2TrafficLights', data); if(isFinal) setCurrentView('t3'); }} />;
           case 't3':
-            return <Task3PingPong 
-                      vocabList={activeVocabList} 
-                      startIndex={startIndex}
-                      completedLevels={trackingData.t3CompletedLevels}
-                      onLevelComplete={(levelId, usedForce) => {
-                        const newLevels = trackingData.t3CompletedLevels.includes(levelId) 
-                          ? trackingData.t3CompletedLevels 
-                          : [...trackingData.t3CompletedLevels, levelId];
+            return <Task3PingPong vocabList={activeVocabList} startIndex={startIndex} completedLevels={trackingData.t3CompletedLevels} onLevelComplete={(levelId, usedForce) => {
+                        const newLevels = trackingData.t3CompletedLevels.includes(levelId) ? trackingData.t3CompletedLevels : [...trackingData.t3CompletedLevels, levelId];
                         updateTracking('t3CompletedLevels', newLevels);
                         if(usedForce) updateTracking('usedForcePass', true);
-                      }}
-                      onCompleteAll={() => setCurrentView('t4')} 
-                    />;
+                      }} onCompleteAll={() => setCurrentView('t4')} />;
           case 't4':
-            return <Task4Export 
-                      vocabList={activeVocabList} 
-                      startIndex={startIndex}
-                      studentName={studentName} 
-                      trackingData={trackingData} 
-                      setCurrentView={setCurrentView}
-                      selectedVersion={selectedVersion}
-                      selectedBook={selectedBook}
-                      selectedUnit={selectedUnit}
-                      selectedCategory={selectedCategory}
-                      selectedRange={selectedRange}
-                   />;
+            return <Task4Grammar grammarList={activeGrammarList} onComplete={(score) => { updateTracking('t4Score', score); updateTracking('t4Completed', true); setCurrentView('t5'); }} onSkip={() => { updateTracking('t4Completed', true); setCurrentView('t5'); }} />;
+          case 't5':
+            return <Task5Export vocabList={activeVocabList} grammarList={activeGrammarList} startIndex={startIndex} studentName={studentName} trackingData={trackingData} setCurrentView={setCurrentView} selectedVersion={selectedVersion} selectedBook={selectedBook} selectedUnit={selectedUnit} selectedCategory={selectedCategory} selectedRange={selectedRange} />;
           default:
             return null;
         }
@@ -379,16 +359,13 @@
               </h1>
               <div className="flex items-center gap-4 text-sm">
                 {currentView !== 'teacher' && (
-                  <button 
-                    onClick={() => isTeacherAuthenticated ? setCurrentView('teacher') : setShowPwdPrompt(true)} 
-                    className="bg-indigo-500 hover:bg-indigo-400 px-3 py-1 rounded text-xs transition-colors shadow-sm font-bold"
-                  >
+                  <button onClick={() => isTeacherAuthenticated ? setCurrentView('teacher') : setShowPwdPrompt(true)} className="bg-indigo-500 hover:bg-indigo-400 px-3 py-1 rounded text-xs transition-colors shadow-sm font-bold">
                     ✏️ 老師編輯區
                   </button>
                 )}
                 {currentView !== 'home' && currentView !== 'teacher' && (
                   <div className="hidden md:block text-indigo-200 font-medium">
-                    {selectedVersion} - {selectedBook} - {selectedUnit} ({selectedRange})
+                    {selectedVersion} - {selectedBook} - {selectedUnit}
                   </div>
                 )}
                 <div className="bg-indigo-700 px-3 py-1 rounded-full">{studentName ? `學生: ${studentName}` : '未登入'}</div>
@@ -398,13 +375,7 @@
           
           <div className="max-w-6xl mx-auto w-full p-4 md:p-6 mt-2 flex flex-col md:flex-row gap-6 flex-1">
             {currentView !== 'teacher' && (
-              <Sidebar 
-                currentView={currentView} 
-                setCurrentView={setCurrentView} 
-                trackingData={trackingData} 
-                vocabCount={activeVocabList.length}
-                studentName={studentName}
-              />
+              <Sidebar currentView={currentView} setCurrentView={setCurrentView} trackingData={trackingData} vocabCount={activeVocabList.length} grammarCount={activeGrammarList.length} studentName={studentName} />
             )}
             
             <main className={`flex-1 min-w-0 ${currentView === 'teacher' ? 'max-w-4xl mx-auto w-full' : ''}`}>
@@ -412,22 +383,14 @@
             </main>
           </div>
 
-          {/* --- 老師密碼輸入彈窗 --- */}
+          {/* 老師密碼輸入彈窗 */}
           {showPwdPrompt && (
             <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
               <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center">
                 <div className="text-4xl mb-4">🔐</div>
                 <h3 className="text-2xl font-bold mb-2 text-slate-800">老師身分驗證</h3>
                 <p className="text-slate-500 mb-6 text-sm">請輸入管理密碼進入編輯區。<br/>(預設密碼：1234)</p>
-                <input 
-                  type="password" 
-                  value={pwdInput} 
-                  onChange={e => setPwdInput(e.target.value)} 
-                  onKeyDown={e => e.key === 'Enter' && handleTeacherLogin()}
-                  className="w-full border-2 border-slate-300 p-3 rounded-xl mb-6 text-center text-xl tracking-widest focus:outline-none focus:border-indigo-500" 
-                  placeholder="••••"
-                  autoFocus
-                />
+                <input type="password" value={pwdInput} onChange={e => setPwdInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleTeacherLogin()} className="w-full border-2 border-slate-300 p-3 rounded-xl mb-6 text-center text-xl tracking-widest focus:outline-none focus:border-indigo-500" placeholder="••••" autoFocus />
                 <div className="flex gap-3 justify-end">
                   <button onClick={() => setShowPwdPrompt(false)} className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors">取消</button>
                   <button onClick={handleTeacherLogin} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors shadow-md">登入</button>
@@ -440,13 +403,14 @@
     }
 
     // --- 左側功能欄元件 (Sidebar) ---
-    function Sidebar({ currentView, setCurrentView, trackingData, vocabCount, studentName }) {
+    function Sidebar({ currentView, setCurrentView, trackingData, vocabCount, grammarCount, studentName }) {
       const steps = [
         { id: 'home', title: '0. 英文建築師', isDone: !!studentName },
         { id: 't1', title: 'T1. 單字閃示卡', isDone: trackingData.t1Completed },
         { id: 't2', title: 'T2. 單字紅綠燈', isDone: Object.keys(trackingData.t2TrafficLights).length === vocabCount && vocabCount > 0 },
         { id: 't3', title: 'T3. 單字乒乓賽', isDone: trackingData.t3CompletedLevels.length === 4 },
-        { id: 't4', title: 'T4. 學習歷程報告', isDone: trackingData.t1Completed && (Object.keys(trackingData.t2TrafficLights).length === vocabCount) && (trackingData.t3CompletedLevels.length === 4) }
+        { id: 't4', title: 'T4. 文法大挑戰', isDone: trackingData.t4Completed },
+        { id: 't5', title: 'T5. 學習歷程報告', isDone: trackingData.t1Completed && (Object.keys(trackingData.t2TrafficLights).length === vocabCount) && (trackingData.t3CompletedLevels.length === 4) && trackingData.t4Completed }
       ];
 
       return (
@@ -460,19 +424,8 @@
                 const isActive = currentView === step.id;
                 return (
                   <li key={step.id}>
-                    <button
-                      onClick={() => setCurrentView(step.id)}
-                      className={`w-full text-left flex items-center gap-3 p-3 rounded-xl transition-all ${
-                        isActive 
-                          ? 'bg-indigo-50 text-indigo-700 font-bold border border-indigo-200 shadow-sm' 
-                          : 'text-slate-600 hover:bg-slate-50 border border-transparent'
-                      } ${!isActive && step.isDone ? 'text-green-600 font-medium' : ''}`}
-                    >
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                        isActive ? 'bg-indigo-500 text-white' : 
-                        step.isDone ? 'bg-green-500 text-white' : 
-                        'bg-slate-100 text-slate-300'
-                      }`}>
+                    <button onClick={() => setCurrentView(step.id)} className={`w-full text-left flex items-center gap-3 p-3 rounded-xl transition-all ${isActive ? 'bg-indigo-50 text-indigo-700 font-bold border border-indigo-200 shadow-sm' : 'text-slate-600 hover:bg-slate-50 border border-transparent'} ${!isActive && step.isDone ? 'text-green-600 font-medium' : ''}`}>
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${isActive ? 'bg-indigo-500 text-white' : step.isDone ? 'bg-green-500 text-white' : 'bg-slate-100 text-slate-300'}`}>
                         {step.isDone && !isActive ? '✓' : ''}
                         {isActive ? '●' : ''}
                       </div>
@@ -487,30 +440,29 @@
       );
     }
 
-    // --- 視圖: 教師編輯區 ---
-    function TeacherEditView({ allVocabData, onSave, isSaving, onCancel }) {
+    // --- 視圖: 教師編輯區 (雙模式：單字/文法) ---
+    function TeacherEditView({ allVocabData, allGrammarData, onSave, isSaving, onCancel }) {
+      const [editType, setEditType] = useState('vocab'); // 'vocab' | 'grammar'
       const [editVersion, setEditVersion] = useState('康軒');
       const [editBook, setEditBook] = useState('七上');
       const [editUnit, setEditUnit] = useState('U1');
       const [inputText, setInputText] = useState("");
       const [error, setError] = useState("");
 
-      // 當切換版本、冊別或單元時，載入對應的資料並轉為文字格式
+      // 當條件改變時，載入對應的資料
       useEffect(() => {
-        const versionData = allVocabData[editVersion] || {};
-        const bookData = versionData[editBook] || {};
-        const unitList = bookData[editUnit] || [];
-        const textFormat = unitList.map(v => {
-          let line = `${v.category} | ${v.word} | ${v.meaning}`;
-          if (v.image || v.audio) line += ` | ${v.image || ''}`;
-          if (v.audio) line += ` | ${v.audio}`;
-          return line;
-        }).join('\n');
-        setInputText(textFormat);
+        if (editType === 'vocab') {
+          const list = allVocabData[editVersion]?.[editBook]?.[editUnit] || [];
+          const textFormat = list.map(v => `${v.category} | ${v.word} | ${v.meaning}${v.image||v.audio ? ' | '+v.image : ''}${v.audio ? ' | '+v.audio : ''}`).join('\n');
+          setInputText(textFormat);
+        } else {
+          const list = allGrammarData[editVersion]?.[editBook]?.[editUnit] || [];
+          const textFormat = list.map(g => `${g.question} | ${g.options.join(',')} | ${g.answer} | ${g.explanation || ''}`).join('\n');
+          setInputText(textFormat);
+        }
         setError("");
-      }, [editVersion, editBook, editUnit, allVocabData]);
+      }, [editType, editVersion, editBook, editUnit, allVocabData, allGrammarData]);
 
-      // 解析輸入框內容的共用函數
       const parseInput = () => {
         const lines = inputText.split('\n');
         const newList = [];
@@ -521,171 +473,125 @@
           if (!line) continue;
           
           const parts = line.split('|').map(s => s.trim());
-          if (parts.length < 2) {
-            setError(`第 ${i + 1} 行格式錯誤，至少需要包含英文與中文 (用 | 區隔)`);
-            return null;
+          
+          if (editType === 'vocab') {
+            if (parts.length < 2) { setError(`第 ${i + 1} 行格式錯誤，至少需包含單字與中文`); return null; }
+            let category = "主題單字"; let wordIdx = 0;
+            if (/^(對話|主題|閱讀)(單字)?$/.test(parts[0])) {
+              category = parts[0].includes('對話') ? '對話單字' : parts[0].includes('閱讀') ? '閱讀單字' : '主題單字';
+              wordIdx = 1;
+            }
+            if (!parts[wordIdx] || !parts[wordIdx+1]) { setError(`第 ${i + 1} 行格式解析失敗`); return null; }
+            newList.push({ id: idCount++, category, word: parts[wordIdx], meaning: parts[wordIdx+1], image: parts[wordIdx+2]||"", audio: parts[wordIdx+3]||"" });
+          } else {
+            // 文法題解析: 題目 | 選項1,選項2 | 答案 | 解析
+            if (parts.length < 3) { setError(`第 ${i + 1} 行文法格式錯誤，需包含: 題目 | 選項A,B,C | 答案`); return null; }
+            const options = parts[1].split(',').map(s => s.trim()).filter(s => s);
+            if (options.length < 2) { setError(`第 ${i + 1} 行選項錯誤，請用逗號區隔選項 (至少兩個)`); return null; }
+            const answer = parts[2];
+            if (!options.includes(answer)) { setError(`第 ${i + 1} 行的正確答案 '${answer}' 必須存在於選項中`); return null; }
+            newList.push({ id: idCount++, question: parts[0], options, answer, explanation: parts[3] || "" });
           }
-
-          let category = "主題單字"; // 預設類別
-          let wordIdx = 0;
-          const firstPart = parts[0];
-          if (/^(對話|主題|閱讀)(單字)?$/.test(firstPart)) {
-            if (firstPart.includes('對話')) category = '對話單字';
-            else if (firstPart.includes('閱讀')) category = '閱讀單字';
-            else category = '主題單字';
-            wordIdx = 1;
-          }
-
-          const word = parts[wordIdx];
-          const meaning = parts[wordIdx + 1];
-          const image = parts[wordIdx + 2] || "";
-          const audio = parts[wordIdx + 3] || "";
-
-          if (!word || !meaning) {
-             setError(`第 ${i + 1} 行格式解析失敗，請確保有單字與意思`);
-             return null;
-          }
-
-          newList.push({ id: idCount++, category, word, meaning, image, audio });
         }
         setError("");
 
-        // 保證其他版本與冊別資料不遺失
-        const updatedVersionData = { ...(allVocabData[editVersion] || {}) };
+        const baseData = editType === 'vocab' ? allVocabData : allGrammarData;
+        const updatedVersionData = { ...(baseData[editVersion] || {}) };
         const updatedBookData = { ...(updatedVersionData[editBook] || {}) };
         updatedBookData[editUnit] = newList;
         updatedVersionData[editBook] = updatedBookData;
-
-        return { ...allVocabData, [editVersion]: updatedVersionData };
+        return { ...baseData, [editVersion]: updatedVersionData };
       };
 
       const handleSave = () => {
         const newData = parseInput();
-        if (newData) onSave(newData); // 直接呼叫父層的儲存(上傳雲端)
+        if (newData) onSave(newData, editType); 
       };
 
       return (
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-indigo-500 w-full">
-          <h2 className="text-2xl font-bold text-indigo-700 mb-6 flex items-center gap-2">
-            ✏️ 資料編輯區 (雲端即時同步)
-          </h2>
-
-          <div className="mb-4">
-            <label className="text-sm font-bold text-slate-700 mb-2 block">1. 選擇版本：</label>
-            <div className="flex gap-2 overflow-x-auto pb-2">
-              {VERSIONS.map(v => (
-                <button 
-                  key={v} 
-                  onClick={() => setEditVersion(v)}
-                  className={`px-5 py-2 rounded-lg font-bold transition-colors shadow-sm whitespace-nowrap ${editVersion === v ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                >
-                  {v}
-                </button>
-              ))}
+          <div className="flex justify-between items-center mb-6 border-b pb-4">
+            <h2 className="text-2xl font-bold text-indigo-700 flex items-center gap-2">✏️ 資料編輯區</h2>
+            <div className="flex bg-slate-100 p-1 rounded-lg">
+              <button onClick={() => setEditType('vocab')} className={`px-4 py-2 rounded-md font-bold transition-all ${editType === 'vocab' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-indigo-500'}`}>📝 編輯單字</button>
+              <button onClick={() => setEditType('grammar')} className={`px-4 py-2 rounded-md font-bold transition-all ${editType === 'grammar' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-indigo-500'}`}>📝 編輯文法</button>
             </div>
           </div>
 
-          <div className="mb-4">
-            <label className="text-sm font-bold text-slate-700 mb-2 block">2. 選擇冊別：</label>
-            <div className="flex gap-2 overflow-x-auto pb-2">
-              {BOOKS.map(b => (
-                <button 
-                  key={b} 
-                  onClick={() => setEditBook(b)}
-                  className={`px-5 py-2 rounded-lg font-bold transition-colors shadow-sm whitespace-nowrap ${editBook === b ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                >
-                  {b}
-                </button>
-              ))}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div>
+              <label className="text-sm font-bold text-slate-700 mb-2 block">1. 選擇版本：</label>
+              <select value={editVersion} onChange={e => setEditVersion(e.target.value)} className="w-full p-2 border-2 border-slate-300 rounded-lg focus:border-indigo-500 font-bold text-slate-700 outline-none">
+                {VERSIONS.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-bold text-slate-700 mb-2 block">2. 選擇冊別：</label>
+              <select value={editBook} onChange={e => setEditBook(e.target.value)} className="w-full p-2 border-2 border-slate-300 rounded-lg focus:border-indigo-500 font-bold text-slate-700 outline-none">
+                {BOOKS.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-bold text-slate-700 mb-2 block">3. 選擇單元：</label>
+              <select value={editUnit} onChange={e => setEditUnit(e.target.value)} className="w-full p-2 border-2 border-slate-300 rounded-lg focus:border-indigo-500 font-bold text-slate-700 outline-none">
+                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
             </div>
           </div>
 
-          <div className="mb-6">
-            <label className="text-sm font-bold text-slate-700 mb-2 block">3. 選擇單元：</label>
-            <div className="flex gap-2 overflow-x-auto pb-2">
-              {UNITS.map(u => (
-                <button 
-                  key={u} 
-                  onClick={() => setEditUnit(u)}
-                  className={`px-5 py-2 rounded-lg font-bold transition-colors shadow-sm whitespace-nowrap ${editUnit === u ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                >
-                  編輯 {u}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="text-slate-600 mb-4 text-sm bg-indigo-50 p-4 rounded border border-indigo-100">
-            <p className="font-bold text-indigo-700 mb-2">正在編輯：{editVersion} - {editBook} - {editUnit}</p>
-            請在下方貼上本課的單字。每行一個單字，格式支援智慧辨識：<br/>
-            <strong>[類別(選填)] | 英文單字 | 中文意思 | 圖片網址 (選填) | 音檔網址 (選填)</strong><br/><br/>
-            範例 1 (純文字，預設為主題單字)：<br/>
-            <span className="text-slate-500 font-mono bg-white px-1">apple | 蘋果</span><br/>
-            範例 2 (指定分類為對話/主題/閱讀)：<br/>
-            <span className="text-slate-500 font-mono bg-white px-1">對話 | banana | 香蕉</span>
+          <div className={`text-sm p-4 rounded border mb-4 ${editType === 'vocab' ? 'bg-indigo-50 border-indigo-100 text-slate-600' : 'bg-emerald-50 border-emerald-100 text-slate-600'}`}>
+            {editType === 'vocab' ? (
+              <>
+                <p className="font-bold text-indigo-700 mb-2">【單字模式】格式支援智慧辨識：</p>
+                <strong>[類別(選填)] | 英文單字 | 中文意思 | 圖片網址 (選填) | 音檔網址 (選填)</strong><br/><br/>
+                範例：<span className="font-mono bg-white px-1 border rounded text-slate-500">主題單字 | apple | 蘋果</span>
+              </>
+            ) : (
+              <>
+                <p className="font-bold text-emerald-700 mb-2">【文法模式】選擇題格式：</p>
+                <strong>題目 | 選項1,選項2,選項3 | 正確答案 | 解析(選填)</strong><br/><br/>
+                範例：<span className="font-mono bg-white px-1 border rounded text-slate-500">He ___ a boy. | is,am,are | is | 主詞為He，搭配is</span>
+              </>
+            )}
           </div>
           
-          <textarea
-            className="w-full h-64 p-4 border-2 border-slate-300 rounded-lg focus:outline-none focus:border-indigo-500 font-mono text-sm mb-2 whitespace-pre overflow-x-auto"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            placeholder="請依照格式輸入單字..."
-          ></textarea>
+          <textarea className={`w-full h-64 p-4 border-2 rounded-lg focus:outline-none font-mono text-sm mb-2 whitespace-pre overflow-x-auto ${editType === 'vocab' ? 'border-slate-300 focus:border-indigo-500' : 'border-slate-300 focus:border-emerald-500'}`} value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder={editType === 'vocab' ? "請依照格式輸入單字..." : "請依照格式輸入文法選擇題..."}></textarea>
           
-          {error && <div className="text-red-500 mb-4 font-bold text-sm bg-red-50 p-2 rounded">{error}</div>}
+          {error && <div className="text-red-500 mb-4 font-bold text-sm bg-red-50 p-3 border border-red-200 rounded">{error}</div>}
           
           <div className="flex flex-col md:flex-row gap-4 mt-4">
-            <button 
-              onClick={handleSave} 
-              disabled={isSaving}
-              className={`flex-1 font-bold py-4 rounded-xl transition-all shadow-md flex justify-center items-center gap-2 ${
-                isSaving ? 'bg-slate-400 text-white cursor-not-allowed' : 'bg-green-500 hover:bg-green-600 text-white hover:-translate-y-1'
-              }`}
-            >
-              {isSaving ? <span className="loader !w-6 !h-6 !border-2 !border-t-white"></span> : '☁️ 儲存至雲端 (學生端自動更新)'}
+            <button onClick={handleSave} disabled={isSaving} className={`flex-1 font-bold py-4 rounded-xl transition-all shadow-md flex justify-center items-center gap-2 ${isSaving ? 'bg-slate-400 text-white cursor-not-allowed' : editType === 'vocab' ? 'bg-indigo-600 hover:bg-indigo-700 text-white hover:-translate-y-1' : 'bg-emerald-600 hover:bg-emerald-700 text-white hover:-translate-y-1'}`}>
+              {isSaving ? <span className="loader !w-6 !h-6 !border-2 !border-t-white"></span> : `☁️ 儲存「${editType === 'vocab' ? '單字' : '文法'}」至雲端`}
             </button>
-            <button onClick={onCancel} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-4 px-8 rounded-xl transition-colors">
-              取消並返回
-            </button>
+            <button onClick={onCancel} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-4 px-8 rounded-xl transition-colors">取消並返回</button>
           </div>
         </div>
       );
     }
 
     // --- 視圖 0: 首頁 / 登入 ---
-    function HomeView({ onStart, activeVocabList, totalCategoryWords, initialName, selectedVersion, setSelectedVersion, selectedBook, setSelectedBook, selectedUnit, setSelectedUnit, selectedCategory, setSelectedCategory, selectedRange, setSelectedRange, startIndex }) {
+    function HomeView({ onStart, activeVocabList, totalCategoryWords, grammarCount, initialName, selectedVersion, setSelectedVersion, selectedBook, setSelectedBook, selectedUnit, setSelectedUnit, selectedCategory, setSelectedCategory, selectedRange, setSelectedRange, startIndex }) {
       const [name, setName] = useState(initialName || '');
       const [customStart, setCustomStart] = useState('');
       const [customEnd, setCustomEnd] = useState('');
       const vocabCount = activeVocabList?.length || 0;
       
-      // 動態產生題號範圍按鈕
       const ranges = useMemo(() => {
         const r = ['全部'];
-        const maxWords = Math.max(50, totalCategoryWords); // 強制至少產生到 50
+        const maxWords = Math.max(50, totalCategoryWords);
         const max = Math.ceil(maxWords / 10) * 10;
-        for (let i = 0; i < max; i += 10) {
-          r.push(`${i + 1}-${i + 10}`);
-        }
+        for (let i = 0; i < max; i += 10) { r.push(`${i + 1}-${i + 10}`); }
         return r;
       }, [totalCategoryWords]);
 
       const applyCustomRange = () => {
-        const s = parseInt(customStart, 10);
-        const e = parseInt(customEnd, 10);
-        if (!isNaN(s) && !isNaN(e) && s > 0 && e >= s) {
-          setSelectedRange(`${s}-${e}`);
-        } else {
-          alert('請輸入正確的題號範圍！起始數字需大於0，且不能大於結束數字。');
-        }
+        const s = parseInt(customStart, 10); const e = parseInt(customEnd, 10);
+        if (!isNaN(s) && !isNaN(e) && s > 0 && e >= s) setSelectedRange(`${s}-${e}`);
+        else alert('請輸入正確的題號範圍！起始需大於0且小於等於結束數字。');
       };
 
-      // 當切換範圍為預設時，清空自訂輸入框
       useEffect(() => {
-        if (selectedRange === '全部' || ranges.includes(selectedRange)) {
-           setCustomStart('');
-           setCustomEnd('');
-        }
+        if (selectedRange === '全部' || ranges.includes(selectedRange)) { setCustomStart(''); setCustomEnd(''); }
       }, [selectedRange, ranges]);
 
       return (
@@ -693,173 +599,62 @@
           <div className="text-center">
             <div className="text-6xl mb-4 mt-2">🏗️</div>
             <h2 className="text-3xl font-bold mb-2 text-indigo-700">英文建築師</h2>
-            <p className="text-slate-500 mb-8">聽發音、開口說，一步步蓋出你的英文大樓！</p>
+            <p className="text-slate-500 mb-8">結合單字與文法，一步步蓋出你的英文大樓！</p>
           </div>
           
           <div className="space-y-6 mb-8 bg-slate-50 p-6 rounded-xl border border-slate-200">
-            {/* 版本選擇 */}
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <span>🏷️</span> 1. 請選擇版本 (Select Version)
-              </label>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                {VERSIONS.map(v => (
-                  <button 
-                    key={v}
-                    onClick={() => setSelectedVersion(v)}
-                    className={`py-2 rounded-lg font-bold text-sm transition-all border-2 ${selectedVersion === v ? 'bg-indigo-100 border-indigo-500 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-indigo-300'}`}
-                  >
-                    {v}
-                  </button>
-                ))}
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">1. 選擇版本</label>
+                <select value={selectedVersion} onChange={e => setSelectedVersion(e.target.value)} className="w-full p-2 border-2 border-slate-300 rounded-lg focus:border-indigo-500 font-bold text-slate-700 outline-none">{VERSIONS.map(v => <option key={v} value={v}>{v}</option>)}</select>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">2. 選擇冊別</label>
+                <select value={selectedBook} onChange={e => setSelectedBook(e.target.value)} className="w-full p-2 border-2 border-slate-300 rounded-lg focus:border-indigo-500 font-bold text-slate-700 outline-none">{BOOKS.map(b => <option key={b} value={b}>{b}</option>)}</select>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">3. 選擇單元</label>
+                <select value={selectedUnit} onChange={e => setSelectedUnit(e.target.value)} className="w-full p-2 border-2 border-slate-300 rounded-lg focus:border-indigo-500 font-bold text-slate-700 outline-none">{UNITS.map(u => <option key={u} value={u}>{u}</option>)}</select>
               </div>
             </div>
 
-            {/* 冊別選擇 */}
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <span>📖</span> 2. 請選擇冊別 (Select Book)
-              </label>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                {BOOKS.map(b => (
-                  <button 
-                    key={b}
-                    onClick={() => setSelectedBook(b)}
-                    className={`py-2 rounded-lg font-bold text-sm transition-all border-2 ${selectedBook === b ? 'bg-indigo-100 border-indigo-500 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-indigo-300'}`}
-                  >
-                    {b}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* 單元選擇 */}
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <span>📚</span> 3. 請選擇單元 (Select Unit)
-              </label>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                {UNITS.map(u => (
-                  <button 
-                    key={u}
-                    onClick={() => setSelectedUnit(u)}
-                    className={`py-2 rounded-lg font-bold text-sm transition-all border-2 ${selectedUnit === u ? 'bg-indigo-100 border-indigo-500 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-indigo-300'}`}
-                  >
-                    {u}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* 分類範圍選擇 */}
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <span>🎯</span> 4. 單字範圍 (Filter Category)
-              </label>
+              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2"><span>🎯</span> 4. 單字範圍 (Filter Category)</label>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {CATEGORIES.map(c => (
-                  <button 
-                    key={c}
-                    onClick={() => setSelectedCategory(c)}
-                    className={`py-2 px-1 rounded-lg font-bold text-sm transition-all border-2 ${selectedCategory === c ? 'bg-blue-100 border-blue-500 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-blue-300'}`}
-                  >
-                    {c}
-                  </button>
-                ))}
+                {CATEGORIES.map(c => <button key={c} onClick={() => setSelectedCategory(c)} className={`py-2 px-1 rounded-lg font-bold text-sm transition-all border-2 ${selectedCategory === c ? 'bg-blue-100 border-blue-500 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-blue-300'}`}>{c}</button>)}
               </div>
             </div>
 
-            {/* 題號範圍選擇 */}
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <span>🔢</span> 5. 單字題號 (Word Range)
-              </label>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
-                {ranges.map(r => (
-                  <button 
-                    key={r}
-                    onClick={() => setSelectedRange(r)}
-                    className={`py-2 px-1 rounded-lg font-bold text-sm transition-all border-2 ${selectedRange === r ? 'bg-orange-100 border-orange-500 text-orange-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-orange-300'}`}
-                  >
-                    {r}
-                  </button>
-                ))}
+              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2"><span>🔢</span> 5. 單字題號 (Word Range)</label>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {ranges.map(r => <button key={r} onClick={() => setSelectedRange(r)} className={`py-2 px-3 rounded-lg font-bold text-sm transition-all border-2 ${selectedRange === r ? 'bg-orange-100 border-orange-500 text-orange-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-orange-300'}`}>{r}</button>)}
               </div>
-
-              {/* 自訂題號輸入區 */}
               <div className="flex items-center gap-2 bg-white p-2 rounded-lg border border-slate-200 inline-flex shadow-sm">
                 <span className="text-sm font-bold text-slate-600 ml-1">✏️ 自訂範圍：</span>
-                <input 
-                  type="number" 
-                  min="1"
-                  value={customStart}
-                  onChange={(e) => setCustomStart(e.target.value)}
-                  placeholder="起" 
-                  className="w-12 text-center border-b-2 border-slate-300 focus:outline-none focus:border-orange-500 text-sm font-bold text-slate-700"
-                />
+                <input type="number" min="1" value={customStart} onChange={(e) => setCustomStart(e.target.value)} placeholder="起" className="w-12 text-center border-b-2 border-slate-300 focus:outline-none focus:border-orange-500 text-sm font-bold text-slate-700" />
                 <span className="text-slate-400 font-bold">-</span>
-                <input 
-                  type="number" 
-                  min="1"
-                  value={customEnd}
-                  onChange={(e) => setCustomEnd(e.target.value)}
-                  placeholder="迄" 
-                  className="w-12 text-center border-b-2 border-slate-300 focus:outline-none focus:border-orange-500 text-sm font-bold text-slate-700"
-                />
-                <button 
-                  onClick={applyCustomRange}
-                  className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded text-sm font-bold transition-colors ml-1 shadow-sm"
-                >
-                  套用
-                </button>
+                <input type="number" min="1" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} placeholder="迄" className="w-12 text-center border-b-2 border-slate-300 focus:outline-none focus:border-orange-500 text-sm font-bold text-slate-700" />
+                <button onClick={applyCustomRange} className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded text-sm font-bold transition-colors ml-1 shadow-sm">套用</button>
               </div>
-              {selectedRange !== '全部' && !ranges.includes(selectedRange) && (
-                <div className="mt-2 text-sm text-orange-600 font-bold">
-                  ✅ 目前使用自訂題號：{selectedRange}
-                </div>
-              )}
             </div>
 
-            <div className="text-center pt-2">
-              <span className="inline-block bg-white border border-slate-200 text-slate-600 px-4 py-1.5 rounded-full text-sm font-bold shadow-sm mb-4">
-                目前篩選出：<span className={vocabCount > 0 ? "text-indigo-600 text-lg" : "text-red-500 text-lg"}>{vocabCount}</span> 個單字
+            <div className="flex flex-col sm:flex-row justify-center gap-4 pt-4 border-t border-slate-200">
+              <span className="inline-block bg-white border-2 border-indigo-200 text-indigo-700 px-4 py-2 rounded-full font-bold shadow-sm">
+                📖 單字測驗：<span className="text-xl">{vocabCount}</span> 題
               </span>
-              
-              {/* 單字預覽區塊 */}
-              <div className="bg-white border-2 border-slate-200 rounded-xl p-4 max-h-48 overflow-y-auto shadow-inner text-left">
-                {vocabCount > 0 ? (
-                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
-                    {activeVocabList.map((v, idx) => (
-                      <li key={v.id} className="text-sm flex justify-between border-b border-slate-100 pb-1">
-                        <span className="font-bold text-slate-700">{startIndex + idx + 1}. {v.word}</span>
-                        <span className="text-slate-500">{v.meaning}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="text-center text-slate-400 py-4">此範圍無單字，請重新選擇過濾條件</div>
-                )}
-              </div>
+              <span className="inline-block bg-white border-2 border-emerald-200 text-emerald-700 px-4 py-2 rounded-full font-bold shadow-sm">
+                📝 文法挑戰：<span className="text-xl">{grammarCount}</span> 題
+              </span>
             </div>
           </div>
 
           <div className="mb-6 text-left max-w-sm mx-auto">
             <label className="block text-sm font-bold text-slate-700 mb-2">6. 學生姓名 (Student Name)</label>
-            <input 
-              type="text" 
-              value={name} 
-              onChange={(e) => setName(e.target.value)} 
-              placeholder="請輸入姓名開始任務" 
-              className="w-full px-4 py-3 rounded-lg border-2 border-slate-300 focus:outline-none focus:border-indigo-500 text-lg text-center font-medium shadow-sm transition-colors" 
-              onKeyDown={(e) => { if (e.key === 'Enter' && name.trim() && vocabCount > 0) onStart(name); }} 
-            />
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="請輸入姓名開始任務" className="w-full px-4 py-3 rounded-lg border-2 border-slate-300 focus:outline-none focus:border-indigo-500 text-lg text-center font-medium shadow-sm transition-colors" onKeyDown={(e) => { if (e.key === 'Enter' && name.trim() && vocabCount > 0) onStart(name); }} />
           </div>
           <div className="max-w-sm mx-auto">
-            <button 
-              onClick={() => onStart(name || '訪客')} 
-              disabled={!name.trim() || vocabCount === 0} 
-              className={`w-full py-4 rounded-xl font-bold text-lg transition-all shadow-md ${(!name.trim() || vocabCount === 0) ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none' : 'bg-indigo-600 hover:bg-indigo-700 text-white transform hover:-translate-y-1'}`}
-            >
+            <button onClick={() => onStart(name || '訪客')} disabled={!name.trim() || vocabCount === 0} className={`w-full py-4 rounded-xl font-bold text-lg transition-all shadow-md ${(!name.trim() || vocabCount === 0) ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none' : 'bg-indigo-600 hover:bg-indigo-700 text-white transform hover:-translate-y-1'}`}>
               {vocabCount === 0 ? '此範圍無單字' : '🚀 開始任務 (Start Mission)'}
             </button>
           </div>
@@ -893,23 +688,10 @@
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-blue-500 w-full">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-bold text-blue-700">T1. 單字閃示卡</h2>
-            <span className="bg-blue-100 text-blue-800 px-4 py-1 rounded-full text-sm font-bold shadow-sm">
-              單字編號：{startIndex + currentIndex + 1}
-            </span>
+            <span className="bg-blue-100 text-blue-800 px-4 py-1 rounded-full text-sm font-bold shadow-sm">單字編號：{startIndex + currentIndex + 1}</span>
           </div>
-          <p className="text-slate-600 mb-6 text-center text-lg">聽發音並觀看字義，準備好後點擊完成進入下一關！</p>
           
           <div className="text-center mb-8 bg-slate-50 py-10 px-4 rounded-2xl border border-slate-200 shadow-inner min-h-[300px] flex flex-col justify-center items-center relative">
-            
-            {currentWord?.image && (
-              <img 
-                src={currentWord.image} 
-                alt={currentWord.word} 
-                className="w-48 h-48 md:w-64 md:h-64 object-cover rounded-xl shadow-md mb-6 border-4 border-white bg-white"
-                onError={(e) => { e.target.style.display = 'none'; }} 
-              />
-            )}
-
             <div className="text-5xl md:text-7xl font-bold text-slate-800 mb-4 tracking-wider flex items-center justify-center gap-4">
               <span className="text-3xl text-slate-300 select-none">{startIndex + currentIndex + 1}.</span>
               {currentWord?.word}
@@ -918,59 +700,17 @@
             <div className="text-xs text-blue-400 font-bold px-2 py-1 bg-blue-50 rounded mb-4 border border-blue-100">{currentWord?.category}</div>
             
             <div className="mt-4 flex flex-col sm:flex-row items-center gap-4">
-              <button 
-                onClick={() => playAudio(currentWord?.word, currentWord?.audio, playbackRate)} 
-                className="flex items-center gap-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-6 py-3 rounded-full transition-colors font-bold text-lg"
-              >
-                🔊 重聽發音
-              </button>
-
-              <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-200">
-                <span className="text-sm font-bold text-slate-500 mr-1">發音速度:</span>
-                {[
-                  { label: '正常', value: 0.9 }, 
-                  { label: '慢速', value: 0.6 }, 
-                  { label: '最慢', value: 0.3 }
-                ].map(speed => (
-                  <button 
-                    key={speed.value} 
-                    onClick={() => {
-                      setPlaybackRate(speed.value);
-                      playAudio(currentWord?.word, currentWord?.audio, speed.value); 
-                    }} 
-                    className={`px-3 py-1 rounded-lg text-sm font-bold transition-colors ${playbackRate === speed.value ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                  >
-                    {speed.label}
-                  </button>
-                ))}
-              </div>
+              <button onClick={() => playAudio(currentWord?.word, currentWord?.audio, playbackRate)} className="flex items-center gap-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-6 py-3 rounded-full transition-colors font-bold text-lg">🔊 重聽發音</button>
             </div>
           </div>
           
           <div className="flex justify-between items-center gap-4 mb-8">
-            <button 
-              onClick={handlePrev} 
-              disabled={currentIndex === 0} 
-              className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all flex justify-center items-center gap-2 ${currentIndex === 0 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-200 hover:bg-slate-300 text-slate-700 shadow-sm'}`}
-            >
-              ⬅️ 上一個
-            </button>
-            <button 
-              onClick={handleNext} 
-              disabled={currentIndex === vocabList.length - 1} 
-              className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all flex justify-center items-center gap-2 ${currentIndex === vocabList.length - 1 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600 text-white shadow-md'}`}
-            >
-              下一個 ➡️
-            </button>
+            <button onClick={handlePrev} disabled={currentIndex === 0} className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all flex justify-center items-center gap-2 ${currentIndex === 0 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-200 hover:bg-slate-300 text-slate-700 shadow-sm'}`}>⬅️ 上一個</button>
+            <button onClick={handleNext} disabled={currentIndex === vocabList.length - 1} className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all flex justify-center items-center gap-2 ${currentIndex === vocabList.length - 1 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600 text-white shadow-md'}`}>下一個 ➡️</button>
           </div>
 
           <div className="text-center border-t border-slate-200 pt-6 mt-4">
-            <button 
-              onClick={onComplete}
-              className="w-full md:w-auto px-10 py-4 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold text-xl shadow-lg transition-transform hover:-translate-y-1"
-            >
-              ✅ 完成複習，進入單字紅綠燈
-            </button>
+            <button onClick={onComplete} className="w-full md:w-auto px-10 py-4 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold text-xl shadow-lg transition-transform hover:-translate-y-1">✅ 完成單字複習</button>
           </div>
         </div>
       );
@@ -996,24 +736,11 @@
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-yellow-500 w-full">
           <h2 className="text-2xl font-bold text-yellow-600 mb-2">T2. 單字紅綠燈</h2>
           <p className="text-slate-600 mb-6">請誠實面對自己！標記你對單字的熟悉度。</p>
-          <div className="flex flex-col md:flex-row gap-4 mb-8">
-            <div className="flex-1 bg-green-50 border border-green-200 p-4 rounded-xl">
-              <h4 className="font-bold text-green-700 flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-green-500 inline-block"></span> 綠燈 (Go)</h4>
-              <ul className="text-sm text-green-800 mt-2 list-disc pl-4"><li>我一看到就會唸，也知道意思。</li><li>我可以馬上拼出來。</li></ul>
-            </div>
-            <div className="flex-1 bg-red-50 border border-red-200 p-4 rounded-xl">
-              <h4 className="font-bold text-red-700 flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-red-500 inline-block"></span> 紅燈 (Stop)</h4>
-              <ul className="text-sm text-red-800 mt-2 list-disc pl-4"><li>我不會唸，或常常唸錯。</li><li>我總是記不起意思。</li></ul>
-            </div>
-          </div>
           <div className="space-y-3 mb-8">
             {vocabList.map((vocab, index) => (
               <div key={vocab.id} className="flex items-center justify-between p-3 md:p-4 bg-slate-50 rounded-xl border border-slate-200 hover:shadow-sm transition-shadow">
                 <div className="flex flex-col md:flex-row md:items-baseline gap-1 md:gap-4 flex-1">
-                  <span className="font-bold text-lg text-slate-800 w-40">
-                    <span className="text-slate-400 mr-2 text-sm">{startIndex + index + 1}.</span>
-                    {vocab.word}
-                  </span>
+                  <span className="font-bold text-lg text-slate-800 w-40"><span className="text-slate-400 mr-2 text-sm">{startIndex + index + 1}.</span>{vocab.word}</span>
                   <span className="text-slate-500">{vocab.meaning}</span>
                 </div>
                 <div className="flex gap-2">
@@ -1024,7 +751,7 @@
             ))}
           </div>
           <button onClick={() => onComplete(evaluations, true)} disabled={!isAllEvaluated} className={`w-full py-4 rounded-xl font-bold text-lg transition-all ${isAllEvaluated ? 'bg-yellow-500 hover:bg-yellow-600 text-white shadow-md' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
-            {isAllEvaluated ? '完成評估，進入乒乓賽' : '請完成所有單字評估'}
+            {isAllEvaluated ? '✅ 完成評估，進入單字乒乓賽' : '請完成所有單字評估'}
           </button>
         </div>
       );
@@ -1038,9 +765,6 @@
       const [feedback, setFeedback] = useState(null);
       const [usedForcePass, setUsedForcePass] = useState(false);
       const [isListening, setIsListening] = useState(false);
-      const [speechError, setSpeechError] = useState("");
-      
-      // 新增狀態：隨機順序開關與當前關卡的單字清單
       const [isRandomOrder, setIsRandomOrder] = useState(false);
       const [levelVocabList, setLevelVocabList] = useState([]);
 
@@ -1048,102 +772,28 @@
       const isLevelFinished = selectedLevel && currentWordIndex >= levelVocabList.length;
 
       const levelInfo = {
-        1: { title: "L1 聽音辨字", desc: "Listen & Choose Word", color: "text-purple-600", border: "border-purple-500" },
-        2: { title: "L2 聽音辨義", desc: "Listen & Choose Meaning", color: "text-pink-600", border: "border-pink-500" },
-        3: { title: "L3 看英說英", desc: "See Word, Speak English", color: "text-orange-600", border: "border-orange-500" },
-        4: { title: "L4 看中說英", desc: "See Chinese, Speak English", color: "text-red-600", border: "border-red-500" }
+        1: { title: "L1 聽音辨字", color: "text-purple-600", border: "border-purple-500" },
+        2: { title: "L2 聽音辨義", color: "text-pink-600", border: "border-pink-500" },
+        3: { title: "L3 看英說英", color: "text-orange-600", border: "border-orange-500" },
+        4: { title: "L4 看中說英", color: "text-red-600", border: "border-red-500" }
       };
 
       const startLevel = (lvl) => {
-        setSelectedLevel(lvl);
-        setCurrentWordIndex(0);
-        setFeedback(null);
-        setUsedForcePass(false);
-        setIsListening(false);
-        setSpeechError("");
-        
-        // 根據開關決定是否打亂單字順序
-        if (isRandomOrder) {
-          setLevelVocabList(shuffleArray(vocabList));
-        } else {
-          setLevelVocabList([...vocabList]);
-        }
+        setSelectedLevel(lvl); setCurrentWordIndex(0); setFeedback(null); setUsedForcePass(false);
+        setLevelVocabList(isRandomOrder ? shuffleArray(vocabList) : [...vocabList]);
       };
 
       useEffect(() => {
-        if (selectedLevel && selectedLevel <= 2 && !isLevelFinished && currentWord) {
+        if (selectedLevel <= 2 && !isLevelFinished && currentWord) {
           const wrongOptions = vocabList.filter(v => v.id !== currentWord.id).sort(() => 0.5 - Math.random()).slice(0, 3);
           setOptions(shuffleArray([...wrongOptions, currentWord]));
-          if (selectedLevel === 1 || selectedLevel === 2) setTimeout(() => playAudio(currentWord.word, currentWord.audio), 300);
+          if (selectedLevel <= 2) setTimeout(() => playAudio(currentWord.word, currentWord.audio), 300);
         }
       }, [currentWordIndex, selectedLevel, isLevelFinished, currentWord, vocabList]);
 
-      const handleChoice = (selectedVocab) => {
-        if (selectedVocab.id === currentWord.id) {
-          setFeedback('correct'); 
-          playAudio("Correct");
-          setTimeout(() => { setFeedback(null); setCurrentWordIndex(prev => prev + 1); }, 1000);
-        } else {
-          setFeedback('wrong'); setTimeout(() => setFeedback(null), 800);
-        }
-      };
-
-      const handleListen = async () => {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-          setSpeechError("您的瀏覽器不支援語音辨識功能，請使用 Chrome 或 Edge，或點擊下方強制通關。");
-          return;
-        }
-
-        setIsListening(true); 
-        setSpeechError("");
-
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'en-US';
-        recognition.interimResults = false;
-        recognition.maxAlternatives = 1;
-
-        recognition.onresult = (event) => {
-          const transcript = event.results[0][0].transcript.toLowerCase().trim();
-          const cleanTranscript = transcript.replace(/[.,!?]/g, "");
-          const targetWord = currentWord.word.toLowerCase();
-
-          if (cleanTranscript.includes(targetWord) || targetWord.includes(cleanTranscript)) {
-            setFeedback('correct'); playAudio("Excellent");
-            setTimeout(() => { setFeedback(null); setCurrentWordIndex(prev => prev + 1); }, 1000);
-          } else {
-            setFeedback('wrong'); setSpeechError(`系統聽到的是: "${transcript}"，再試一次！`);
-            setTimeout(() => setFeedback(null), 2000);
-          }
-          setIsListening(false);
-        };
-        
-        recognition.onerror = (e) => {
-          console.error("語音錯誤:", e.error);
-          setIsListening(false);
-          if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-            setSpeechError("麥克風存取被拒絕 🚫 請點擊網址列左側的「🔒鎖頭」圖示，允許麥克風權限後重試。");
-          } else if (e.error === 'no-speech') {
-            setSpeechError("沒有聽到聲音，請再說一次！");
-          } else {
-            setSpeechError(`語音辨識發生錯誤 (${e.error})，請重試或點擊下方強制通關。`);
-          }
-        };
-        
-        recognition.onend = () => setIsListening(false);
-
-        try {
-          recognition.start();
-        } catch (err) {
-          console.error("語音辨識啟動失敗:", err);
-          setIsListening(false);
-          setSpeechError("無法啟動麥克風，請重整網頁後再試，或使用「強制通關」。");
-        }
-      };
-
       const forcePass = () => {
         setUsedForcePass(true); setFeedback('correct');
-        setTimeout(() => { setFeedback(null); setCurrentWordIndex(prev => prev + 1); setSpeechError(""); }, 500);
+        setTimeout(() => { setFeedback(null); setCurrentWordIndex(prev => prev + 1); }, 500);
       };
 
       if (!vocabList || vocabList.length === 0) return null;
@@ -1152,92 +802,45 @@
         const isAllDone = completedLevels.length >= 4;
         return (
           <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-indigo-500 w-full">
-            <h2 className="text-2xl font-bold text-indigo-700 mb-2">T3. 單字乒乓賽</h2>
-            <p className="text-slate-600 mb-4">請選擇你要挑戰的關卡，依照個人進度完成所有四個關卡！</p>
-            
-            {/* 隨機順序開關 */}
+            <h2 className="text-2xl font-bold text-indigo-700 mb-6">T3. 單字乒乓賽</h2>
             <div className="mb-6 flex items-center gap-3 bg-indigo-50 p-3 rounded-xl border border-indigo-100 w-fit">
-              <input
-                type="checkbox"
-                id="randomOrderToggle"
-                checked={isRandomOrder}
-                onChange={(e) => setIsRandomOrder(e.target.checked)}
-                className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
-              />
-              <label htmlFor="randomOrderToggle" className="font-bold text-indigo-800 cursor-pointer select-none">
-                🔀 隨機出題順序 (打亂單字)
-              </label>
+              <input type="checkbox" id="randomOrderToggle" checked={isRandomOrder} onChange={(e) => setIsRandomOrder(e.target.checked)} className="w-5 h-5 text-indigo-600 cursor-pointer" />
+              <label htmlFor="randomOrderToggle" className="font-bold text-indigo-800 cursor-pointer select-none">🔀 隨機出題順序</label>
             </div>
-
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-              {[1, 2, 3, 4].map(lvl => {
-                const levelId = 'l' + lvl;
-                const isDone = completedLevels.includes(levelId);
-                const info = levelInfo[lvl];
-                return (
-                  <button 
-                    key={lvl} 
-                    onClick={() => startLevel(lvl)} 
-                    className={`p-6 rounded-xl border-2 text-left transition-all relative overflow-hidden group ${
-                      isDone ? 'bg-green-50 border-green-300' : 'bg-white border-slate-200 hover:border-indigo-400 hover:shadow-md'
-                    }`}
-                  >
-                    <div className={`font-bold text-xl mb-1 ${info.color}`}>{info.title}</div>
-                    <div className="text-sm text-slate-500">{info.desc}</div>
-                    {isDone && <div className="absolute top-4 right-4 text-green-500 text-2xl" title="已完成">✅</div>}
-                    {!isDone && <div className="absolute top-4 right-4 text-slate-200 text-2xl group-hover:text-indigo-200 transition-colors">▶️</div>}
-                  </button>
-                );
-              })}
+              {[1, 2, 3, 4].map(lvl => (
+                <button key={lvl} onClick={() => startLevel(lvl)} className={`p-6 rounded-xl border-2 text-left relative ${completedLevels.includes('l'+lvl) ? 'bg-green-50 border-green-300' : 'bg-white hover:border-indigo-400'}`}>
+                  <div className={`font-bold text-xl mb-1 ${levelInfo[lvl].color}`}>{levelInfo[lvl].title}</div>
+                  {completedLevels.includes('l'+lvl) && <div className="absolute top-4 right-4 text-green-500 text-2xl">✅</div>}
+                </button>
+              ))}
             </div>
-
-            <button 
-              onClick={onCompleteAll} 
-              disabled={!isAllDone} 
-              className={`w-full py-4 rounded-xl font-bold text-lg transition-all ${isAllDone ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-            >
-              {isAllDone ? '🎉 完成乒乓賽，前往學習歷程報告' : '🔒 請先完成所有四個關卡'}
+            <button onClick={onCompleteAll} disabled={!isAllDone} className={`w-full py-4 rounded-xl font-bold text-lg transition-all ${isAllDone ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+              {isAllDone ? '✅ 完成乒乓賽，前往文法大挑戰' : '🔒 請先完成所有四個關卡'}
             </button>
           </div>
         );
       }
 
       if (isLevelFinished) {
-        return (
-          <CompletionScreen 
-            title={`Level ${selectedLevel} 挑戰成功！`} 
-            message="你已經完成這個關卡的測驗。" 
-            btnText="回關卡選單" 
-            onNext={() => {
-              onLevelComplete('l' + selectedLevel, usedForcePass);
-              setSelectedLevel(null);
-            }} 
-            colorClass="bg-purple-600" 
-          />
-        );
+        return <CompletionScreen title={`Level ${selectedLevel} 完成！`} message="" btnText="回關卡選單" onNext={() => { onLevelComplete('l' + selectedLevel, usedForcePass); setSelectedLevel(null); }} />;
       }
 
       return (
         <div className={`bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 ${levelInfo[selectedLevel].border} w-full`}>
-          <div className="flex justify-between items-baseline mb-2">
+          <div className="flex justify-between items-baseline mb-6">
             <h2 className={`text-2xl font-bold ${levelInfo[selectedLevel].color}`}>T3. {levelInfo[selectedLevel].title}</h2>
-            <div className="flex items-center gap-3 md:gap-6">
-              <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full font-bold text-sm shadow-sm border border-slate-200">
-                {isRandomOrder ? `進度：${currentWordIndex + 1} / ${levelVocabList.length}` : `單字編號：${startIndex + currentWordIndex + 1}`}
-              </span>
-              <button onClick={() => setSelectedLevel(null)} className="text-sm bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-3 py-1.5 rounded-lg transition-colors font-bold border border-indigo-200">
-                🔙 回選單
-              </button>
-            </div>
+            <span className="bg-slate-100 px-3 py-1 rounded-full font-bold text-sm">進度: {currentWordIndex + 1} / {levelVocabList.length}</span>
           </div>
-          <p className="text-slate-500 mb-8">{levelInfo[selectedLevel].desc}</p>
           
           {selectedLevel <= 2 && (
             <div className="flex flex-col items-center">
-              <button onClick={() => playAudio(currentWord?.word, currentWord?.audio)} className="w-24 h-24 bg-indigo-100 hover:bg-indigo-200 text-indigo-600 rounded-full flex items-center justify-center text-4xl mb-8 transition-transform hover:scale-105 shadow-inner">🔊</button>
+              <button onClick={() => playAudio(currentWord?.word)} className="w-24 h-24 bg-indigo-100 text-indigo-600 rounded-full text-4xl mb-8">🔊</button>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
                 {options.map(opt => (
-                  <button key={opt.id} onClick={() => handleChoice(opt)} disabled={feedback !== null} className={`p-4 rounded-xl border-2 text-lg font-medium transition-all ${feedback === 'wrong' ? 'border-red-200 bg-red-50 opacity-50' : feedback === 'correct' && opt.id === currentWord.id ? 'border-green-500 bg-green-100 text-green-700' : 'border-slate-200 bg-white hover:border-indigo-400 hover:shadow-md'}`}>{selectedLevel === 1 ? opt.word : opt.meaning}</button>
+                  <button key={opt.id} onClick={() => { setFeedback(opt.id===currentWord.id?'correct':'wrong'); if(opt.id===currentWord.id){ playAudio("Correct"); setTimeout(()=>{setFeedback(null);setCurrentWordIndex(p=>p+1);},1000); }else{setTimeout(()=>setFeedback(null),800)} }} disabled={feedback !== null} className={`p-4 rounded-xl border-2 text-lg font-medium ${feedback === 'wrong' ? 'border-red-200 bg-red-50 opacity-50' : feedback === 'correct' && opt.id === currentWord.id ? 'border-green-500 bg-green-100 text-green-700' : 'bg-white hover:border-indigo-400'}`}>
+                    {selectedLevel === 1 ? opt.word : opt.meaning}
+                  </button>
                 ))}
               </div>
             </div>
@@ -1245,36 +848,124 @@
           
           {selectedLevel >= 3 && (
             <div className="flex flex-col items-center text-center">
-              <div className="text-5xl md:text-6xl font-bold text-slate-800 mb-8 min-h-[80px] flex items-center justify-center">{selectedLevel === 3 ? currentWord?.word : currentWord?.meaning}</div>
-              <button onClick={handleListen} disabled={isListening || feedback !== null} className={`w-32 h-32 rounded-full flex flex-col items-center justify-center text-white shadow-lg transition-all transform hover:scale-105 mb-6 ${isListening ? 'bg-red-500 animate-pulse' : 'bg-indigo-500 hover:bg-indigo-600'}`}>
-                <span className="text-4xl mb-1">{isListening ? '🎙️' : '🎤'}</span>
-                <span className="font-bold text-sm">{isListening ? '聆聽中...' : '點擊說話'}</span>
-              </button>
-              {speechError && <div className="text-red-500 bg-red-50 px-4 py-2 rounded-lg mb-4 text-sm max-w-sm">{speechError}</div>}
-              <button onClick={forcePass} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-6 py-2 rounded-full text-sm font-bold mt-4 border border-slate-300 transition-colors shadow-sm">
-                ⚡ 辨識卡住或沒麥克風？點此強制通關
-              </button>
+              <div className="text-5xl font-bold text-slate-800 mb-8">{selectedLevel === 3 ? currentWord?.word : currentWord?.meaning}</div>
+              <button onClick={forcePass} className="bg-indigo-500 hover:bg-indigo-600 text-white px-8 py-4 rounded-full font-bold text-lg shadow-lg">直接過關 (口說請實體測試)</button>
             </div>
           )}
           {feedback === 'wrong' && <div className="text-center text-red-500 mt-6 font-bold animate-pulse text-lg">再試一次！</div>}
-          {feedback === 'correct' && <div className="text-center text-green-500 mt-6 font-bold animate-bounce text-lg">太棒了！</div>}
         </div>
       );
     }
 
-    // --- 視圖 4: 學習歷程輸出 ---
-    function Task4Export({ vocabList, startIndex, studentName, trackingData, setCurrentView, selectedVersion, selectedBook, selectedUnit, selectedCategory, selectedRange }) {
+    // --- 🟢 新增視圖 4: 文法大挑戰 (Task 4 Grammar) ---
+    function Task4Grammar({ grammarList, onComplete, onSkip }) {
+      const [currentIndex, setCurrentIndex] = useState(0);
+      const [selectedOption, setSelectedOption] = useState(null);
+      const [score, setScore] = useState(0);
+      const [showExplanation, setShowExplanation] = useState(false);
+      
+      const isFinished = currentIndex >= grammarList.length;
+      const currentQ = grammarList[currentIndex];
+
+      if (!grammarList || grammarList.length === 0) {
+        return (
+          <div className="bg-white p-8 rounded-2xl shadow-lg border-t-4 border-emerald-500 text-center">
+            <h2 className="text-2xl font-bold text-emerald-700 mb-4">T4. 文法大挑戰</h2>
+            <p className="text-slate-500 mb-6">此單元老師尚未建立文法題庫喔！</p>
+            <button onClick={onSkip} className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 px-8 rounded-full">直接前往學習歷程報告 ➡️</button>
+          </div>
+        );
+      }
+
+      if (isFinished) {
+        return (
+          <div className="bg-white p-10 rounded-2xl shadow-lg text-center border-t-4 border-emerald-500">
+            <div className="text-6xl mb-4">🏆</div>
+            <h2 className="text-3xl font-bold text-slate-800 mb-2">文法挑戰完成！</h2>
+            <p className="text-xl text-emerald-600 font-bold mb-8">答對題數：{score} / {grammarList.length}</p>
+            <button onClick={() => onComplete(score)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 px-10 rounded-full shadow-lg">產生最終學習報告 ➡️</button>
+          </div>
+        );
+      }
+
+      const handleOptionClick = (opt) => {
+        if (selectedOption) return; // 已經作答過
+        setSelectedOption(opt);
+        if (opt === currentQ.answer) {
+          setScore(s => s + 1);
+          playAudio("Correct");
+          setTimeout(handleNext, 1200); // 答對自動下一題
+        } else {
+          playAudio("Wrong", null, 1.5);
+          setShowExplanation(true); // 答錯顯示解析，讓學生自己按下一題
+        }
+      };
+
+      const handleNext = () => {
+        setSelectedOption(null);
+        setShowExplanation(false);
+        setCurrentIndex(p => p + 1);
+      };
+
+      return (
+        <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-emerald-500 w-full">
+          <div className="flex justify-between items-baseline mb-6 border-b pb-4">
+            <h2 className="text-2xl font-bold text-emerald-700">T4. 文法大挑戰</h2>
+            <span className="bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full font-bold text-sm">進度：{currentIndex + 1} / {grammarList.length}</span>
+          </div>
+
+          <div className="text-2xl md:text-3xl font-bold text-slate-800 mb-8 mt-4 leading-relaxed">
+            {currentIndex + 1}. {currentQ.question}
+          </div>
+
+          <div className="flex flex-col gap-3 mb-8">
+            {currentQ.options.map((opt, idx) => {
+              // 判斷按鈕樣式
+              let btnClass = "bg-white border-2 border-slate-200 text-slate-700 hover:border-emerald-400";
+              if (selectedOption) {
+                if (opt === currentQ.answer) btnClass = "bg-emerald-100 border-emerald-500 text-emerald-800 font-bold";
+                else if (opt === selectedOption) btnClass = "bg-red-50 border-red-400 text-red-600 line-through";
+                else btnClass = "bg-slate-50 border-slate-200 text-slate-400 opacity-50";
+              }
+              return (
+                <button key={idx} onClick={() => handleOptionClick(opt)} disabled={!!selectedOption} className={`w-full text-left p-4 rounded-xl text-lg transition-all ${btnClass}`}>
+                  <span className="inline-block w-8 font-bold">{['A', 'B', 'C', 'D', 'E'][idx]}.</span> {opt}
+                </button>
+              );
+            })}
+          </div>
+
+          {showExplanation && (
+            <div className="bg-orange-50 border-l-4 border-orange-500 p-4 rounded-r-lg mb-6 animate-pulse">
+              <p className="font-bold text-orange-800 mb-1">💡 解析：</p>
+              <p className="text-orange-700">{currentQ.explanation || '老師沒有提供解析喔，正確答案是 ' + currentQ.answer}</p>
+            </div>
+          )}
+
+          {showExplanation && (
+            <div className="text-right">
+              <button onClick={handleNext} className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 px-8 rounded-full shadow-md">了解了，下一題 ➡️</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // --- 視圖 5: 學習歷程輸出 (原 Task4) ---
+    function Task5Export({ vocabList, grammarList, startIndex, studentName, trackingData, setCurrentView, selectedVersion, selectedBook, selectedUnit, selectedCategory, selectedRange }) {
       const totalWords = vocabList.length;
+      const totalGrammar = grammarList.length;
       
       const t1Done = trackingData.t1Completed;
       const t2Done = Object.keys(trackingData.t2TrafficLights).length === totalWords && totalWords > 0;
       const t3Done = trackingData.t3CompletedLevels.length === 4;
-      const allDone = t1Done && t2Done && t3Done;
+      const t4Done = trackingData.t4Completed;
+      const allDone = t1Done && t2Done && t3Done && t4Done;
 
       const greenCount = Object.values(trackingData.t2TrafficLights).filter(v => v === 'green').length;
       const greenPercent = Math.round((greenCount / totalWords) * 100) || 0;
-      const t1Percent = t1Done ? 100 : 0;
-      const t3Percent = (trackingData.t3CompletedLevels.length / 4) * 100;
+      const grammarScorePercent = totalGrammar > 0 ? Math.round((trackingData.t4Score / totalGrammar) * 100) : 100;
+      
       const handlePrint = () => window.print();
 
       return (
@@ -1284,76 +975,29 @@
             <h3 className="text-xl text-slate-500">英文建築師</h3>
             
             <div className="mt-6 flex flex-wrap justify-center gap-3">
-              <span className="bg-indigo-50 text-indigo-800 font-bold px-4 py-2 rounded-lg border border-indigo-100">學生: {studentName || '未具名'}</span>
-              <span className="bg-rose-50 text-rose-800 font-bold px-4 py-2 rounded-lg border border-rose-100">版本: {selectedVersion}</span>
-              <span className="bg-teal-50 text-teal-800 font-bold px-4 py-2 rounded-lg border border-teal-100">冊別: {selectedBook}</span>
-              <span className="bg-blue-50 text-blue-800 font-bold px-4 py-2 rounded-lg border border-blue-100">單元: {selectedUnit}</span>
-              <span className="bg-purple-50 text-purple-800 font-bold px-4 py-2 rounded-lg border border-purple-100">範圍: {selectedCategory}</span>
-              <span className="bg-orange-50 text-orange-800 font-bold px-4 py-2 rounded-lg border border-orange-100">題號: {selectedRange}</span>
+              <span className="bg-indigo-50 text-indigo-800 font-bold px-3 py-1 rounded border border-indigo-100">{studentName || '未具名'}</span>
+              <span className="bg-rose-50 text-rose-800 font-bold px-3 py-1 rounded border border-rose-100">{selectedVersion}</span>
+              <span className="bg-teal-50 text-teal-800 font-bold px-3 py-1 rounded border border-teal-100">{selectedBook}</span>
+              <span className="bg-blue-50 text-blue-800 font-bold px-3 py-1 rounded border border-blue-100">{selectedUnit}</span>
+              <span className="bg-purple-50 text-purple-800 font-bold px-3 py-1 rounded border border-purple-100">{selectedCategory} ({selectedRange})</span>
             </div>
           </div>
           
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 text-center">
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200"><div className="text-sm text-slate-500 mb-1">任務單字數</div><div className="text-2xl font-bold text-slate-800">{totalWords}</div></div>
-            <div className="bg-blue-50 p-4 rounded-xl border border-blue-200"><div className="text-sm text-blue-600 mb-1">閃示卡完成度(T1)</div><div className="text-2xl font-bold text-blue-800">{t1Percent}%</div></div>
-            <div className="bg-green-50 p-4 rounded-xl border border-green-200"><div className="text-sm text-green-600 mb-1">綠燈掌握度(T2)</div><div className="text-2xl font-bold text-green-800">{greenPercent}%</div></div>
-            <div className="bg-purple-50 p-4 rounded-xl border border-purple-200"><div className="text-sm text-purple-600 mb-1">聽說綜合(T3)</div><div className="text-2xl font-bold text-purple-800">{t3Percent}%</div></div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8 text-center">
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200"><div className="text-xs text-slate-500 mb-1">單字總數</div><div className="text-xl font-bold text-slate-800">{totalWords}</div></div>
+            <div className="bg-blue-50 p-3 rounded-xl border border-blue-200"><div className="text-xs text-blue-600 mb-1">閃示卡(T1)</div><div className="text-xl font-bold text-blue-800">{t1Done ? '100%' : '未完成'}</div></div>
+            <div className="bg-green-50 p-3 rounded-xl border border-green-200"><div className="text-xs text-green-600 mb-1">綠燈掌握(T2)</div><div className="text-xl font-bold text-green-800">{greenPercent}%</div></div>
+            <div className="bg-purple-50 p-3 rounded-xl border border-purple-200"><div className="text-xs text-purple-600 mb-1">聽說(T3)</div><div className="text-xl font-bold text-purple-800">{trackingData.t3CompletedLevels.length}/4</div></div>
+            <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-200"><div className="text-xs text-emerald-600 mb-1">文法得分(T4)</div><div className="text-xl font-bold text-emerald-800">{totalGrammar === 0 ? '無題目' : `${grammarScorePercent}分`}</div></div>
           </div>
 
-          {!allDone && (
-            <div className="bg-red-50 p-6 rounded-xl text-center print:hidden border border-red-200 mb-8 shadow-sm">
-              <h4 className="text-red-700 font-bold mb-4 text-xl">⚠️ 還有任務尚未完成喔！</h4>
-              <p className="text-slate-600 mb-4">請點擊下方按鈕，前往尚未完成的關卡：</p>
-              <div className="flex flex-col md:flex-row justify-center gap-4">
-                {!t1Done && <button onClick={() => setCurrentView('t1')} className="bg-white border-2 border-red-400 text-red-600 px-6 py-3 rounded-lg font-bold hover:bg-red-100 transition-colors shadow-sm">前往 T1. 單字閃示卡</button>}
-                {!t2Done && <button onClick={() => setCurrentView('t2')} className="bg-white border-2 border-red-400 text-red-600 px-6 py-3 rounded-lg font-bold hover:bg-red-100 transition-colors shadow-sm">前往 T2. 單字紅綠燈</button>}
-                {!t3Done && <button onClick={() => setCurrentView('t3')} className="bg-white border-2 border-red-400 text-red-600 px-6 py-3 rounded-lg font-bold hover:bg-red-100 transition-colors shadow-sm">前往 T3. 單字乒乓賽</button>}
-              </div>
-            </div>
-          )}
-
-          <div className="mb-8 overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead><tr className="bg-slate-100 border-b-2 border-slate-300"><th className="p-3 font-bold text-slate-700">單字 (Word)</th><th className="p-3 font-bold text-slate-700 text-center">自評 (T2)</th><th className="p-3 font-bold text-slate-700 text-center">測驗狀態</th></tr></thead>
-              <tbody>
-                {vocabList.map((vocab, index) => {
-                  const light = trackingData.t2TrafficLights[vocab.id];
-                  return (
-                    <tr key={vocab.id} className={`border-b border-slate-200 ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
-                      <td className="p-3">
-                        <div className="font-bold text-slate-800 flex items-center gap-2">
-                          <span className="text-slate-400 text-sm">{startIndex + index + 1}.</span>
-                          {vocab.word}
-                        </div>
-                        <div className="text-slate-500 text-sm ml-6">({vocab.meaning})</div>
-                      </td>
-                      <td className="p-3 text-center">{light === 'green' ? <span className="text-green-500 font-bold">🟢 綠燈</span> : light === 'red' ? <span className="text-red-500 font-bold">🔴 紅燈</span> : '-'}</td>
-                      <td className="p-3 text-center text-indigo-600 font-bold">{allDone ? '✔️ 已完成' : '進行中'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          
-          {trackingData.usedForcePass && <div className="text-sm text-slate-500 italic mb-6 text-right">* 註：口說測驗包含強制通關紀錄</div>}
-          
-          {allDone && (
-            <div className="bg-indigo-50 p-6 rounded-xl text-center print:hidden border border-indigo-100 mb-8">
-              <p className="text-indigo-800 font-bold mb-2 text-xl">Great Job! 恭喜完成所有任務！</p>
-              <p className="text-sm text-indigo-600">請將此頁面列印成 PDF 或截圖，並上傳至 Google Classroom 繳交。</p>
-            </div>
-          )}
-
-          {/* 獨立出列印按鈕，讓未完成的進度也能隨時列印 */}
-          <div className="text-center print:hidden">
-            <button onClick={handlePrint} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-10 rounded-full shadow-lg transition-transform hover:-translate-y-1 flex items-center justify-center gap-2 mx-auto text-lg">🖨️ 產生 PDF / 列印目前進度報告</button>
+          <div className="text-center print:hidden mb-4">
+            <button onClick={handlePrint} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-full shadow-md transition-transform hover:-translate-y-1 inline-flex items-center gap-2">🖨️ 列印學習報告 (PDF)</button>
           </div>
         </div>
       );
     }
 
-    // --- 共用元件: 關卡完成過渡畫面 ---
     function CompletionScreen({ title, message, btnText, onNext, colorClass = "bg-indigo-600" }) {
       return (
         <div className="bg-white p-10 rounded-2xl shadow-lg text-center border-t-4 border-slate-200 w-full">
@@ -1365,7 +1009,6 @@
       );
     }
 
-    // --- 啟動 React 應用程式 ---
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>

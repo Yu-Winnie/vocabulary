@@ -770,9 +770,10 @@
 
       useEffect(() => {
         if (currentWord) {
+          // 修正：移除 playbackRate 依賴，避免切換速度時重複觸發播放造成音訊干擾
           setTimeout(() => playAudio(currentWord.word, currentWord.audio, playbackRate), 300);
         }
-      }, [currentIndex, currentWord, playbackRate]);
+      }, [currentIndex, currentWord]);
 
       const handleNext = () => {
         if (currentIndex < vocabList.length - 1) setCurrentIndex(prev => prev + 1);
@@ -823,9 +824,9 @@
               <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-200">
                 <span className="text-sm font-bold text-slate-500 mr-1">發音速度:</span>
                 {[
-                  { label: '正常', value: 1.0 }, 
-                  { label: '慢速', value: 0.7 }, 
-                  { label: '最慢', value: 0.5 }
+                  { label: '正常', value: 0.9 }, 
+                  { label: '慢速', value: 0.6 }, 
+                  { label: '最慢', value: 0.3 }
                 ].map(speed => (
                   <button 
                     key={speed.value} 
@@ -972,10 +973,23 @@
         }
       };
 
-      const handleListen = () => {
+      const handleListen = async () => {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
           setSpeechError("您的瀏覽器不支援語音辨識功能，請使用 Chrome 或 Edge，或點擊下方強制通關。");
+          return;
+        }
+
+        try {
+          // 修正：強制預先請求麥克風權限，解決部分瀏覽器或預覽環境的自動阻擋問題
+          await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (err) {
+          console.error("麥克風存取被拒:", err);
+          if (window.self !== window.top) {
+             setSpeechError("⚠️ AI 平台預覽畫面阻擋了麥克風。請將檔案發布到您的 GitHub Pages 後再測試！");
+          } else {
+             setSpeechError("無法存取麥克風，請確認您的瀏覽器已允許麥克風權限。");
+          }
           return;
         }
 
@@ -991,7 +1005,7 @@
         } catch (err) {
           console.error("語音辨識啟動失敗:", err);
           setIsListening(false);
-          setSpeechError("麥克風無法存取 (可能是協作平台安全性限制)，請直接點擊下方「強制通關」。");
+          setSpeechError("麥克風被阻擋，請使用強制通關，或發布到 GitHub 後重試。");
           return; 
         }
 

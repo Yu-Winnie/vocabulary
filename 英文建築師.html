@@ -84,10 +84,10 @@
       { "id": 2, "category": "主題單字", "word": "vocabulary", "meaning": "字彙", "image": "", "audio": "" }
     ];
 
-    // 預設範例資料：文法觀念
+    // 預設範例資料：文法觀念 (改為寬鬆格式：標題 | 內容 | 圖片 | 音檔)
     DEFAULT_GRAMMAR_CONCEPTS_DATA['康軒']['七上']['U1'] = [
-      { "id": 1, "title": "Be動詞用法 (1)", "english": "I am a student.", "chinese": "當主詞是 I (我) 的時候，搭配的 be 動詞必須是 am。", "audio": "" },
-      { "id": 2, "title": "Be動詞用法 (2)", "english": "You are my best friend.", "chinese": "當主詞是 You (你) 的時候，搭配的 be 動詞必須是 are。", "audio": "" }
+      { "id": 1, "title": "Be動詞用法 (1)", "content": "當主詞是 I (我) 的時候，搭配的 be 動詞必須是 am。\n例句：I am a student. (我是一個學生)", "image": "", "audio": "" },
+      { "id": 2, "title": "Be動詞用法 (2)", "content": "當主詞是 You (你) 的時候，搭配的 be 動詞必須是 are。\n例句：You are my best friend. (你是我最好的朋友)", "image": "", "audio": "" }
     ];
 
     // 預設範例資料：文法挑戰
@@ -105,7 +105,9 @@
       } else if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = 'en-US';
+        // 智慧判斷語言：如果包含中文字，則切換成中文語音
+        const hasChinese = /[\u4e00-\u9fa5]/.test(text);
+        utterance.lang = hasChinese ? 'zh-TW' : 'en-US';
         utterance.rate = rate;
         window.speechSynthesis.speak(utterance);
       }
@@ -359,6 +361,7 @@
             </main>
           </div>
 
+          {/* 老師密碼輸入彈窗 */}
           {showPwdPrompt && (
             <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
               <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center">
@@ -432,7 +435,8 @@
           setInputText(list.map(v => `${v.category} | ${v.word} | ${v.meaning}${v.image||v.audio ? ' | '+v.image : ''}${v.audio ? ' | '+v.audio : ''}`).join('\n'));
         } else if (editType === 'grammar_concept') {
           const list = allGrammarConceptsData[editVersion]?.[editBook]?.[editUnit] || [];
-          setInputText(list.map(c => `${c.title} | ${c.english} | ${c.chinese}${c.audio ? ' | '+c.audio : ''}`).join('\n'));
+          // 針對文法觀念使用雙換行 (空一行) 來區隔不同觀念卡片
+          setInputText(list.map(c => `${c.title} | ${c.content}${c.image ? ' | '+c.image : ''}${c.audio ? ' | '+c.audio : ''}`).join('\n\n'));
         } else {
           const list = allGrammarData[editVersion]?.[editBook]?.[editUnit] || [];
           setInputText(list.map(g => `${g.question} | ${g.options.join(',')} | ${g.answer} | ${g.explanation || ''}`).join('\n'));
@@ -441,33 +445,57 @@
       }, [editType, editVersion, editBook, editUnit, allVocabData, allGrammarConceptsData, allGrammarData]);
 
       const parseInput = () => {
-        const lines = inputText.split('\n');
-        const newList = [];
+        let newList = [];
         let idCount = 1;
 
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (!line) continue;
-          const parts = line.split('|').map(s => s.trim());
-          
-          if (editType === 'vocab') {
-            if (parts.length < 2) { setError(`第 ${i + 1} 行格式錯誤，至少需包含單字與中文`); return null; }
-            let category = "主題單字"; let wordIdx = 0;
-            if (/^(對話|主題|閱讀)(單字)?$/.test(parts[0])) { category = parts[0].includes('對話') ? '對話單字' : parts[0].includes('閱讀') ? '閱讀單字' : '主題單字'; wordIdx = 1; }
-            if (!parts[wordIdx] || !parts[wordIdx+1]) { setError(`第 ${i + 1} 行格式解析失敗`); return null; }
-            newList.push({ id: idCount++, category, word: parts[wordIdx], meaning: parts[wordIdx+1], image: parts[wordIdx+2]||"", audio: parts[wordIdx+3]||"" });
-          } else if (editType === 'grammar_concept') {
-            if (parts.length < 3) { setError(`第 ${i + 1} 行觀念格式錯誤，需包含: 標題 | 英文例句 | 中文說明`); return null; }
-            newList.push({ id: idCount++, title: parts[0], english: parts[1], chinese: parts[2], audio: parts[3] || "" });
-          } else {
-            if (parts.length < 3) { setError(`第 ${i + 1} 行文法格式錯誤，需包含: 題目 | 選項A,B,C | 答案`); return null; }
-            const options = parts[1].split(',').map(s => s.trim()).filter(s => s);
-            if (options.length < 2) { setError(`第 ${i + 1} 行選項錯誤，請用逗號區隔選項 (至少兩個)`); return null; }
-            const answer = parts[2];
-            if (!options.includes(answer)) { setError(`第 ${i + 1} 行的答案 '${answer}' 必須存在於選項中`); return null; }
-            newList.push({ id: idCount++, question: parts[0], options, answer, explanation: parts[3] || "" });
+        if (editType === 'grammar_concept') {
+          // 文法觀念：以「空一行(雙換行)」作為分隔符，支援文字內換行
+          const blocks = inputText.split(/\n\s*\n/);
+          for (let i = 0; i < blocks.length; i++) {
+            const block = blocks[i].trim();
+            if (!block) continue;
+            const parts = block.split('|').map(s => s.trim());
+            
+            let title = "文法重點";
+            let content = parts[0];
+            let image = "";
+            let audio = "";
+            
+            if (parts.length >= 2) {
+              title = parts[0];
+              content = parts[1];
+            }
+            if (parts.length >= 3) image = parts[2];
+            if (parts.length >= 4) audio = parts[3];
+
+            newList.push({ id: idCount++, title, content, image, audio });
+          }
+        } else {
+          // 單字與文法測驗：以單行作為分隔
+          const lines = inputText.split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            const parts = line.split('|').map(s => s.trim());
+            
+            if (editType === 'vocab') {
+              if (parts.length < 2) { setError(`第 ${i + 1} 行格式錯誤，至少需包含單字與中文`); return null; }
+              let category = "主題單字"; let wordIdx = 0;
+              if (/^(對話|主題|閱讀)(單字)?$/.test(parts[0])) { category = parts[0].includes('對話') ? '對話單字' : parts[0].includes('閱讀') ? '閱讀單字' : '主題單字'; wordIdx = 1; }
+              if (!parts[wordIdx] || !parts[wordIdx+1]) { setError(`第 ${i + 1} 行格式解析失敗`); return null; }
+              newList.push({ id: idCount++, category, word: parts[wordIdx], meaning: parts[wordIdx+1], image: parts[wordIdx+2]||"", audio: parts[wordIdx+3]||"" });
+            } else {
+              // 文法測驗
+              if (parts.length < 3) { setError(`第 ${i + 1} 行文法格式錯誤，需包含: 題目 | 選項A,B,C | 答案`); return null; }
+              const options = parts[1].split(',').map(s => s.trim()).filter(s => s);
+              if (options.length < 2) { setError(`第 ${i + 1} 行選項錯誤，請用逗號區隔選項 (至少兩個)`); return null; }
+              const answer = parts[2];
+              if (!options.includes(answer)) { setError(`第 ${i + 1} 行的答案 '${answer}' 必須存在於選項中`); return null; }
+              newList.push({ id: idCount++, question: parts[0], options, answer, explanation: parts[3] || "" });
+            }
           }
         }
+        
         setError("");
 
         const baseData = editType === 'vocab' ? allVocabData : editType === 'grammar_concept' ? allGrammarConceptsData : allGrammarData;
@@ -511,7 +539,7 @@
 
           <div className={`text-sm p-4 rounded border mb-4 ${editType === 'vocab' ? 'bg-indigo-50 border-indigo-100 text-slate-600' : editType === 'grammar_concept' ? 'bg-cyan-50 border-cyan-100 text-slate-600' : 'bg-emerald-50 border-emerald-100 text-slate-600'}`}>
             {editType === 'vocab' && (<><p className="font-bold text-indigo-700 mb-2">【單字模式】格式支援：</p><strong>[類別(選填)] | 英文單字 | 中文意思 | 圖片網址 (選填)</strong><br/><br/>範例：<span className="font-mono bg-white px-1 border rounded text-slate-500">主題單字 | apple | 蘋果</span></>)}
-            {editType === 'grammar_concept' && (<><p className="font-bold text-cyan-700 mb-2">【文法觀念】用於閃示卡教學，格式支援：</p><strong>標題 | 英文例句 | 中文說明 | 音檔網址 (選填)</strong><br/><br/>範例：<span className="font-mono bg-white px-1 border rounded text-slate-500">Be動詞 | I am a boy. | 主詞為 I 時搭配 am</span></>)}
+            {editType === 'grammar_concept' && (<><p className="font-bold text-cyan-700 mb-2">【文法觀念】寬鬆格式，支援多行說明與圖片：</p><strong>標題 | 說明內容(可換行) | 圖片網址(選填) | 音檔網址(選填)</strong><br/><br/>💡 <span className="text-cyan-600">不同觀念之間請用「空一行 (Enter兩次)」來區隔。</span><br/>範例：<span className="font-mono bg-white px-1 border rounded text-slate-500">Be動詞 | 主詞是I時搭配am... | https://img.url</span></>)}
             {editType === 'grammar_quiz' && (<><p className="font-bold text-emerald-700 mb-2">【文法題目】選擇題格式：</p><strong>題目 | 選項1,選項2,選項3 | 正確答案 | 解析(選填)</strong><br/><br/>範例：<span className="font-mono bg-white px-1 border rounded text-slate-500">He ___ a boy. | is,am,are | is | 主詞為He，搭配is</span></>)}
           </div>
           
@@ -878,7 +906,7 @@
       const currentConcept = conceptList[currentIndex];
 
       useEffect(() => {
-        if (currentConcept) setTimeout(() => playAudio(currentConcept.english, currentConcept.audio, playbackRate), 300);
+        if (currentConcept) setTimeout(() => playAudio(currentConcept.content, currentConcept.audio, playbackRate), 300);
       }, [currentIndex, currentConcept]);
 
       const handleNext = () => { if (currentIndex < conceptList.length - 1) setCurrentIndex(p => p + 1); };
@@ -900,7 +928,6 @@
             <h2 className="text-2xl font-bold text-cyan-700">T4. 文法小學堂</h2>
             <span className="bg-cyan-100 text-cyan-800 px-4 py-1 rounded-full text-sm font-bold shadow-sm">觀念編號：{currentIndex + 1} / {conceptList.length}</span>
           </div>
-          <p className="text-slate-600 mb-6 text-center text-lg">聽例句、看說明，學習文法觀念！</p>
           
           <div className="text-center mb-8 bg-slate-50 py-10 px-4 rounded-2xl border border-slate-200 shadow-inner min-h-[300px] flex flex-col justify-center items-center relative">
             
@@ -908,20 +935,20 @@
               {currentConcept?.title}
             </div>
 
-            <div className="text-4xl md:text-5xl font-bold text-slate-800 mb-6 tracking-wider flex items-center justify-center">
-              {currentConcept?.english}
-            </div>
+            {currentConcept?.image && (
+              <img src={currentConcept.image} alt="Grammar Concept" className="max-w-full max-h-64 object-contain rounded-xl shadow-md mb-6 border-4 border-white bg-white" onError={(e) => { e.target.style.display = 'none'; }} />
+            )}
             
-            <div className="text-slate-600 text-xl md:text-2xl mb-2 font-medium px-4 py-2 border-l-4 border-cyan-500 text-left w-full max-w-2xl bg-white shadow-sm">
-              {currentConcept?.chinese}
+            <div className="text-slate-700 text-xl md:text-2xl mb-2 font-medium px-6 py-4 text-left w-full max-w-3xl whitespace-pre-wrap leading-relaxed">
+              {currentConcept?.content}
             </div>
             
             <div className="mt-8 flex flex-col sm:flex-row items-center gap-4">
-              <button onClick={() => playAudio(currentConcept?.english, currentConcept?.audio, playbackRate)} className="flex items-center gap-2 bg-cyan-100 hover:bg-cyan-200 text-cyan-700 px-6 py-3 rounded-full transition-colors font-bold text-lg">🔊 聽英文例句</button>
+              <button onClick={() => playAudio(currentConcept?.content, currentConcept?.audio, playbackRate)} className="flex items-center gap-2 bg-cyan-100 hover:bg-cyan-200 text-cyan-700 px-6 py-3 rounded-full transition-colors font-bold text-lg">🔊 語音播放</button>
               <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-200">
-                <span className="text-sm font-bold text-slate-500 mr-1">發音速度:</span>
+                <span className="text-sm font-bold text-slate-500 mr-1">語速:</span>
                 {[{ label: '正常', value: 0.9 }, { label: '慢速', value: 0.6 }, { label: '最慢', value: 0.3 }].map(speed => (
-                  <button key={speed.value} onClick={() => { setPlaybackRate(speed.value); playAudio(currentConcept?.english, currentConcept?.audio, speed.value); }} className={`px-3 py-1 rounded-lg text-sm font-bold transition-colors ${playbackRate === speed.value ? 'bg-cyan-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{speed.label}</button>
+                  <button key={speed.value} onClick={() => { setPlaybackRate(speed.value); playAudio(currentConcept?.content, currentConcept?.audio, speed.value); }} className={`px-3 py-1 rounded-lg text-sm font-bold transition-colors ${playbackRate === speed.value ? 'bg-cyan-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{speed.label}</button>
                 ))}
               </div>
             </div>

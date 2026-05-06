@@ -980,34 +980,13 @@
           return;
         }
 
-        try {
-          // 修正：強制預先請求麥克風權限，解決部分瀏覽器或預覽環境的自動阻擋問題
-          await navigator.mediaDevices.getUserMedia({ audio: true });
-        } catch (err) {
-          console.error("麥克風存取被拒:", err);
-          if (window.self !== window.top) {
-             setSpeechError("⚠️ AI 平台預覽畫面阻擋了麥克風。請將檔案發布到您的 GitHub Pages 後再測試！");
-          } else {
-             setSpeechError("無法存取麥克風，請確認您的瀏覽器已允許麥克風權限。");
-          }
-          return;
-        }
+        setIsListening(true); 
+        setSpeechError("");
 
         const recognition = new SpeechRecognition();
         recognition.lang = 'en-US';
         recognition.interimResults = false;
         recognition.maxAlternatives = 1;
-        setIsListening(true); 
-        setSpeechError("");
-
-        try {
-          recognition.start();
-        } catch (err) {
-          console.error("語音辨識啟動失敗:", err);
-          setIsListening(false);
-          setSpeechError("麥克風被阻擋，請使用強制通關，或發布到 GitHub 後重試。");
-          return; 
-        }
 
         recognition.onresult = (event) => {
           const transcript = event.results[0][0].transcript.toLowerCase().trim();
@@ -1027,10 +1006,24 @@
         recognition.onerror = (e) => {
           console.error("語音錯誤:", e.error);
           setIsListening(false);
-          setSpeechError("麥克風收音發生錯誤或被拒絕，請重試或使用強制通關。");
+          if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+            setSpeechError("麥克風存取被拒絕 🚫 請點擊網址列左側的「🔒鎖頭」圖示，允許麥克風權限後重試。");
+          } else if (e.error === 'no-speech') {
+            setSpeechError("沒有聽到聲音，請再說一次！");
+          } else {
+            setSpeechError(`語音辨識發生錯誤 (${e.error})，請重試或點擊下方強制通關。`);
+          }
         };
         
         recognition.onend = () => setIsListening(false);
+
+        try {
+          recognition.start();
+        } catch (err) {
+          console.error("語音辨識啟動失敗:", err);
+          setIsListening(false);
+          setSpeechError("無法啟動麥克風，請重整網頁後再試，或使用「強制通關」。");
+        }
       };
 
       const forcePass = () => {

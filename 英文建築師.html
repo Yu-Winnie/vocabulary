@@ -61,21 +61,25 @@
     // =========================================================================
 
     // --- 全域變數定義 ---
+    const VERSIONS = ['康軒', '翰林', '南一'];
     const BOOKS = ['七上', '七下', '八上', '八下', '九上', '九下'];
     const UNITS = ['U1', 'U2', 'U3', 'U4', 'U5', 'U6'];
     const CATEGORIES = ['全部單字', '對話單字', '主題單字', '閱讀單字'];
 
-    // --- 預設單字庫 (包含所有冊別與單元) ---
-    const DEFAULT_VOCAB_DATA = BOOKS.reduce((acc, book) => {
-      acc[book] = UNITS.reduce((uAcc, unit) => {
-        uAcc[unit] = [];
-        return uAcc;
+    // --- 預設單字庫 (包含所有版本、冊別與單元) ---
+    const DEFAULT_VOCAB_DATA = VERSIONS.reduce((vAcc, version) => {
+      vAcc[version] = BOOKS.reduce((bAcc, book) => {
+        bAcc[book] = UNITS.reduce((uAcc, unit) => {
+          uAcc[unit] = [];
+          return uAcc;
+        }, {});
+        return bAcc;
       }, {});
-      return acc;
+      return vAcc;
     }, {});
 
-    // 在「七上 U1」放入預設範例單字
-    DEFAULT_VOCAB_DATA['七上']['U1'] = [
+    // 在「康軒 七上 U1」放入預設範例單字
+    DEFAULT_VOCAB_DATA['康軒']['七上']['U1'] = [
       { "id": 1, "category": "主題單字", "word": "architect", "meaning": "建築師", "image": "", "audio": "" },
       { "id": 2, "category": "主題單字", "word": "vocabulary", "meaning": "字彙", "image": "", "audio": "" },
       { "id": 3, "category": "對話單字", "word": "interactive", "meaning": "互動的", "image": "", "audio": "" },
@@ -167,10 +171,16 @@
         const unsubscribe = docRef.onSnapshot((snapshot) => {
           if (snapshot.exists) {
             let data = snapshot.data();
-            // --- 資料庫相容性處理 (如果是舊版只有 U1~U6 的資料，將其移入「七上」) ---
-            if (data && data['U1'] && !data['七上']) {
+            // --- 資料庫相容性處理 (舊版資料自動升級) ---
+            if (data && data['U1'] && !data['七上'] && !data['康軒']) {
+              // 這是最舊的結構 (只有 U1~U6) -> 移到 康軒 -> 七上
               const migratedData = JSON.parse(JSON.stringify(DEFAULT_VOCAB_DATA));
-              migratedData['七上'] = data;
+              migratedData['康軒']['七上'] = data;
+              data = migratedData;
+            } else if (data && data['七上'] && !data['康軒']) {
+              // 這是上一版的結構 (只有冊別) -> 移到 康軒
+              const migratedData = JSON.parse(JSON.stringify(DEFAULT_VOCAB_DATA));
+              migratedData['康軒'] = data;
               data = migratedData;
             }
             setAllVocabData(data);
@@ -209,27 +219,29 @@
         }
       };
 
-      // 學生選擇的冊別、單元、分類與題號範圍
+      // 學生選擇的版本、冊別、單元、分類與題號範圍
+      const [selectedVersion, setSelectedVersion] = useState('康軒');
       const [selectedBook, setSelectedBook] = useState('七上');
       const [selectedUnit, setSelectedUnit] = useState('U1');
       const [selectedCategory, setSelectedCategory] = useState('全部單字');
       const [selectedRange, setSelectedRange] = useState('全部');
 
-      // 1. 先依冊別、單元與分類過濾出基礎清單
+      // 1. 先依版本、冊別、單元與分類過濾出基礎清單
       const baseVocabList = useMemo(() => {
         if (!allVocabData) return [];
-        const bookData = allVocabData[selectedBook] || {};
+        const versionData = allVocabData[selectedVersion] || {};
+        const bookData = versionData[selectedBook] || {};
         const list = bookData[selectedUnit] || [];
         if (selectedCategory !== '全部單字') {
           return list.filter(v => v.category === selectedCategory);
         }
         return list;
-      }, [allVocabData, selectedBook, selectedUnit, selectedCategory]);
+      }, [allVocabData, selectedVersion, selectedBook, selectedUnit, selectedCategory]);
 
-      // 當冊別、單元或分類改變時，自動重置題號範圍為「全部」
+      // 當版本、冊別、單元或分類改變時，自動重置題號範圍為「全部」
       useEffect(() => {
         setSelectedRange('全部');
-      }, [selectedBook, selectedUnit, selectedCategory]);
+      }, [selectedVersion, selectedBook, selectedUnit, selectedCategory]);
 
       // 計算真實的起始編號
       const startIndex = useMemo(() => {
@@ -303,6 +315,8 @@
                       activeVocabList={activeVocabList} 
                       totalCategoryWords={baseVocabList.length}
                       initialName={studentName}
+                      selectedVersion={selectedVersion}
+                      setSelectedVersion={setSelectedVersion}
                       selectedBook={selectedBook}
                       setSelectedBook={setSelectedBook}
                       selectedUnit={selectedUnit}
@@ -323,7 +337,7 @@
           case 't1':
             return <Task1Flashcards vocabList={activeVocabList} startIndex={startIndex} onComplete={() => { updateTracking('t1Completed', true); setCurrentView('t2'); }} />;
           case 't2':
-            return <Task2TrafficLight vocabList={activeVocabList} startIndex={startIndex} initialData={trackingData.t2TrafficLights} onComplete={(data) => { updateTracking('t2TrafficLights', data); setCurrentView('t3'); }} />;
+            return <Task2TrafficLight vocabList={activeVocabList} startIndex={startIndex} initialData={trackingData.t2TrafficLights} onComplete={(data, isFinal) => { updateTracking('t2TrafficLights', data); if(isFinal) setCurrentView('t3'); }} />;
           case 't3':
             return <Task3PingPong 
                       vocabList={activeVocabList} 
@@ -345,6 +359,7 @@
                       studentName={studentName} 
                       trackingData={trackingData} 
                       setCurrentView={setCurrentView}
+                      selectedVersion={selectedVersion}
                       selectedBook={selectedBook}
                       selectedUnit={selectedUnit}
                       selectedCategory={selectedCategory}
@@ -373,7 +388,7 @@
                 )}
                 {currentView !== 'home' && currentView !== 'teacher' && (
                   <div className="hidden md:block text-indigo-200 font-medium">
-                    {selectedBook} - {selectedUnit} ({selectedRange})
+                    {selectedVersion} - {selectedBook} - {selectedUnit} ({selectedRange})
                   </div>
                 )}
                 <div className="bg-indigo-700 px-3 py-1 rounded-full">{studentName ? `學生: ${studentName}` : '未登入'}</div>
@@ -474,14 +489,16 @@
 
     // --- 視圖: 教師編輯區 ---
     function TeacherEditView({ allVocabData, onSave, isSaving, onCancel }) {
+      const [editVersion, setEditVersion] = useState('康軒');
       const [editBook, setEditBook] = useState('七上');
       const [editUnit, setEditUnit] = useState('U1');
       const [inputText, setInputText] = useState("");
       const [error, setError] = useState("");
 
-      // 當切換冊別或單元時，載入對應的資料並轉為文字格式
+      // 當切換版本、冊別或單元時，載入對應的資料並轉為文字格式
       useEffect(() => {
-        const bookData = allVocabData[editBook] || {};
+        const versionData = allVocabData[editVersion] || {};
+        const bookData = versionData[editBook] || {};
         const unitList = bookData[editUnit] || [];
         const textFormat = unitList.map(v => {
           let line = `${v.category} | ${v.word} | ${v.meaning}`;
@@ -491,7 +508,7 @@
         }).join('\n');
         setInputText(textFormat);
         setError("");
-      }, [editBook, editUnit, allVocabData]);
+      }, [editVersion, editBook, editUnit, allVocabData]);
 
       // 解析輸入框內容的共用函數
       const parseInput = () => {
@@ -533,11 +550,13 @@
         }
         setError("");
 
-        // 保證其他冊別資料不遺失
-        const updatedBookData = { ...(allVocabData[editBook] || {}) };
+        // 保證其他版本與冊別資料不遺失
+        const updatedVersionData = { ...(allVocabData[editVersion] || {}) };
+        const updatedBookData = { ...(updatedVersionData[editBook] || {}) };
         updatedBookData[editUnit] = newList;
+        updatedVersionData[editBook] = updatedBookData;
 
-        return { ...allVocabData, [editBook]: updatedBookData };
+        return { ...allVocabData, [editVersion]: updatedVersionData };
       };
 
       const handleSave = () => {
@@ -552,7 +571,22 @@
           </h2>
 
           <div className="mb-4">
-            <label className="text-sm font-bold text-slate-700 mb-2 block">1. 選擇冊別：</label>
+            <label className="text-sm font-bold text-slate-700 mb-2 block">1. 選擇版本：</label>
+            <div className="flex gap-2 overflow-x-auto pb-2">
+              {VERSIONS.map(v => (
+                <button 
+                  key={v} 
+                  onClick={() => setEditVersion(v)}
+                  className={`px-5 py-2 rounded-lg font-bold transition-colors shadow-sm whitespace-nowrap ${editVersion === v ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <label className="text-sm font-bold text-slate-700 mb-2 block">2. 選擇冊別：</label>
             <div className="flex gap-2 overflow-x-auto pb-2">
               {BOOKS.map(b => (
                 <button 
@@ -567,7 +601,7 @@
           </div>
 
           <div className="mb-6">
-            <label className="text-sm font-bold text-slate-700 mb-2 block">2. 選擇單元：</label>
+            <label className="text-sm font-bold text-slate-700 mb-2 block">3. 選擇單元：</label>
             <div className="flex gap-2 overflow-x-auto pb-2">
               {UNITS.map(u => (
                 <button 
@@ -582,7 +616,7 @@
           </div>
 
           <div className="text-slate-600 mb-4 text-sm bg-indigo-50 p-4 rounded border border-indigo-100">
-            <p className="font-bold text-indigo-700 mb-2">正在編輯：{editBook} - {editUnit}</p>
+            <p className="font-bold text-indigo-700 mb-2">正在編輯：{editVersion} - {editBook} - {editUnit}</p>
             請在下方貼上本課的單字。每行一個單字，格式支援智慧辨識：<br/>
             <strong>[類別(選填)] | 英文單字 | 中文意思 | 圖片網址 (選填) | 音檔網址 (選填)</strong><br/><br/>
             範例 1 (純文字，預設為主題單字)：<br/>
@@ -619,8 +653,10 @@
     }
 
     // --- 視圖 0: 首頁 / 登入 ---
-    function HomeView({ onStart, activeVocabList, totalCategoryWords, initialName, selectedBook, setSelectedBook, selectedUnit, setSelectedUnit, selectedCategory, setSelectedCategory, selectedRange, setSelectedRange, startIndex }) {
+    function HomeView({ onStart, activeVocabList, totalCategoryWords, initialName, selectedVersion, setSelectedVersion, selectedBook, setSelectedBook, selectedUnit, setSelectedUnit, selectedCategory, setSelectedCategory, selectedRange, setSelectedRange, startIndex }) {
       const [name, setName] = useState(initialName || '');
+      const [customStart, setCustomStart] = useState('');
+      const [customEnd, setCustomEnd] = useState('');
       const vocabCount = activeVocabList?.length || 0;
       
       // 動態產生題號範圍按鈕
@@ -634,6 +670,24 @@
         return r;
       }, [totalCategoryWords]);
 
+      const applyCustomRange = () => {
+        const s = parseInt(customStart, 10);
+        const e = parseInt(customEnd, 10);
+        if (!isNaN(s) && !isNaN(e) && s > 0 && e >= s) {
+          setSelectedRange(`${s}-${e}`);
+        } else {
+          alert('請輸入正確的題號範圍！起始數字需大於0，且不能大於結束數字。');
+        }
+      };
+
+      // 當切換範圍為預設時，清空自訂輸入框
+      useEffect(() => {
+        if (selectedRange === '全部' || ranges.includes(selectedRange)) {
+           setCustomStart('');
+           setCustomEnd('');
+        }
+      }, [selectedRange, ranges]);
+
       return (
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-indigo-500 w-full max-w-2xl mx-auto">
           <div className="text-center">
@@ -643,10 +697,28 @@
           </div>
           
           <div className="space-y-6 mb-8 bg-slate-50 p-6 rounded-xl border border-slate-200">
+            {/* 版本選擇 */}
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <span>🏷️</span> 1. 請選擇版本 (Select Version)
+              </label>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                {VERSIONS.map(v => (
+                  <button 
+                    key={v}
+                    onClick={() => setSelectedVersion(v)}
+                    className={`py-2 rounded-lg font-bold text-sm transition-all border-2 ${selectedVersion === v ? 'bg-indigo-100 border-indigo-500 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-indigo-300'}`}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* 冊別選擇 */}
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <span>📖</span> 1. 請選擇冊別 (Select Book)
+                <span>📖</span> 2. 請選擇冊別 (Select Book)
               </label>
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                 {BOOKS.map(b => (
@@ -664,7 +736,7 @@
             {/* 單元選擇 */}
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <span>📚</span> 2. 請選擇單元 (Select Unit)
+                <span>📚</span> 3. 請選擇單元 (Select Unit)
               </label>
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                 {UNITS.map(u => (
@@ -682,7 +754,7 @@
             {/* 分類範圍選擇 */}
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <span>🎯</span> 3. 單字範圍 (Filter Category)
+                <span>🎯</span> 4. 單字範圍 (Filter Category)
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {CATEGORIES.map(c => (
@@ -700,9 +772,9 @@
             {/* 題號範圍選擇 */}
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <span>🔢</span> 4. 單字題號 (Word Range)
+                <span>🔢</span> 5. 單字題號 (Word Range)
               </label>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
                 {ranges.map(r => (
                   <button 
                     key={r}
@@ -713,6 +785,39 @@
                   </button>
                 ))}
               </div>
+
+              {/* 自訂題號輸入區 */}
+              <div className="flex items-center gap-2 bg-white p-2 rounded-lg border border-slate-200 inline-flex shadow-sm">
+                <span className="text-sm font-bold text-slate-600 ml-1">✏️ 自訂範圍：</span>
+                <input 
+                  type="number" 
+                  min="1"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  placeholder="起" 
+                  className="w-12 text-center border-b-2 border-slate-300 focus:outline-none focus:border-orange-500 text-sm font-bold text-slate-700"
+                />
+                <span className="text-slate-400 font-bold">-</span>
+                <input 
+                  type="number" 
+                  min="1"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  placeholder="迄" 
+                  className="w-12 text-center border-b-2 border-slate-300 focus:outline-none focus:border-orange-500 text-sm font-bold text-slate-700"
+                />
+                <button 
+                  onClick={applyCustomRange}
+                  className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded text-sm font-bold transition-colors ml-1 shadow-sm"
+                >
+                  套用
+                </button>
+              </div>
+              {selectedRange !== '全部' && !ranges.includes(selectedRange) && (
+                <div className="mt-2 text-sm text-orange-600 font-bold">
+                  ✅ 目前使用自訂題號：{selectedRange}
+                </div>
+              )}
             </div>
 
             <div className="text-center pt-2">
@@ -739,7 +844,7 @@
           </div>
 
           <div className="mb-6 text-left max-w-sm mx-auto">
-            <label className="block text-sm font-bold text-slate-700 mb-2">5. 學生姓名 (Student Name)</label>
+            <label className="block text-sm font-bold text-slate-700 mb-2">6. 學生姓名 (Student Name)</label>
             <input 
               type="text" 
               value={name} 
@@ -770,7 +875,6 @@
 
       useEffect(() => {
         if (currentWord) {
-          // 修正：移除 playbackRate 依賴，避免切換速度時重複觸發播放造成音訊干擾
           setTimeout(() => playAudio(currentWord.word, currentWord.audio, playbackRate), 300);
         }
       }, [currentIndex, currentWord]);
@@ -935,9 +1039,13 @@
       const [usedForcePass, setUsedForcePass] = useState(false);
       const [isListening, setIsListening] = useState(false);
       const [speechError, setSpeechError] = useState("");
+      
+      // 新增狀態：隨機順序開關與當前關卡的單字清單
+      const [isRandomOrder, setIsRandomOrder] = useState(false);
+      const [levelVocabList, setLevelVocabList] = useState([]);
 
-      const currentWord = vocabList[currentWordIndex];
-      const isLevelFinished = selectedLevel && currentWordIndex >= vocabList.length;
+      const currentWord = levelVocabList[currentWordIndex];
+      const isLevelFinished = selectedLevel && currentWordIndex >= levelVocabList.length;
 
       const levelInfo = {
         1: { title: "L1 聽音辨字", desc: "Listen & Choose Word", color: "text-purple-600", border: "border-purple-500" },
@@ -953,6 +1061,13 @@
         setUsedForcePass(false);
         setIsListening(false);
         setSpeechError("");
+        
+        // 根據開關決定是否打亂單字順序
+        if (isRandomOrder) {
+          setLevelVocabList(shuffleArray(vocabList));
+        } else {
+          setLevelVocabList([...vocabList]);
+        }
       };
 
       useEffect(() => {
@@ -1038,8 +1153,22 @@
         return (
           <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border-t-4 border-indigo-500 w-full">
             <h2 className="text-2xl font-bold text-indigo-700 mb-2">T3. 單字乒乓賽</h2>
-            <p className="text-slate-600 mb-6">請選擇你要挑戰的關卡，依照個人進度完成所有四個關卡！</p>
+            <p className="text-slate-600 mb-4">請選擇你要挑戰的關卡，依照個人進度完成所有四個關卡！</p>
             
+            {/* 隨機順序開關 */}
+            <div className="mb-6 flex items-center gap-3 bg-indigo-50 p-3 rounded-xl border border-indigo-100 w-fit">
+              <input
+                type="checkbox"
+                id="randomOrderToggle"
+                checked={isRandomOrder}
+                onChange={(e) => setIsRandomOrder(e.target.checked)}
+                className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
+              />
+              <label htmlFor="randomOrderToggle" className="font-bold text-indigo-800 cursor-pointer select-none">
+                🔀 隨機出題順序 (打亂單字)
+              </label>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
               {[1, 2, 3, 4].map(lvl => {
                 const levelId = 'l' + lvl;
@@ -1094,7 +1223,7 @@
             <h2 className={`text-2xl font-bold ${levelInfo[selectedLevel].color}`}>T3. {levelInfo[selectedLevel].title}</h2>
             <div className="flex items-center gap-3 md:gap-6">
               <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full font-bold text-sm shadow-sm border border-slate-200">
-                單字編號：{startIndex + currentWordIndex + 1}
+                {isRandomOrder ? `進度：${currentWordIndex + 1} / ${levelVocabList.length}` : `單字編號：${startIndex + currentWordIndex + 1}`}
               </span>
               <button onClick={() => setSelectedLevel(null)} className="text-sm bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-3 py-1.5 rounded-lg transition-colors font-bold border border-indigo-200">
                 🔙 回選單
@@ -1134,7 +1263,7 @@
     }
 
     // --- 視圖 4: 學習歷程輸出 ---
-    function Task4Export({ vocabList, startIndex, studentName, trackingData, setCurrentView, selectedBook, selectedUnit, selectedCategory, selectedRange }) {
+    function Task4Export({ vocabList, startIndex, studentName, trackingData, setCurrentView, selectedVersion, selectedBook, selectedUnit, selectedCategory, selectedRange }) {
       const totalWords = vocabList.length;
       
       const t1Done = trackingData.t1Completed;
@@ -1156,6 +1285,7 @@
             
             <div className="mt-6 flex flex-wrap justify-center gap-3">
               <span className="bg-indigo-50 text-indigo-800 font-bold px-4 py-2 rounded-lg border border-indigo-100">學生: {studentName || '未具名'}</span>
+              <span className="bg-rose-50 text-rose-800 font-bold px-4 py-2 rounded-lg border border-rose-100">版本: {selectedVersion}</span>
               <span className="bg-teal-50 text-teal-800 font-bold px-4 py-2 rounded-lg border border-teal-100">冊別: {selectedBook}</span>
               <span className="bg-blue-50 text-blue-800 font-bold px-4 py-2 rounded-lg border border-blue-100">單元: {selectedUnit}</span>
               <span className="bg-purple-50 text-purple-800 font-bold px-4 py-2 rounded-lg border border-purple-100">範圍: {selectedCategory}</span>
@@ -1209,12 +1339,16 @@
           {trackingData.usedForcePass && <div className="text-sm text-slate-500 italic mb-6 text-right">* 註：口說測驗包含強制通關紀錄</div>}
           
           {allDone && (
-            <div className="bg-indigo-50 p-6 rounded-xl text-center print:hidden border border-indigo-100">
-              <p className="text-indigo-800 font-bold mb-4 text-xl">Great Job! 恭喜完成所有任務！</p>
-              <p className="text-sm text-indigo-600 mb-6">請將此頁面列印成 PDF 或截圖，並上傳至 Google Classroom 繳交。</p>
-              <button onClick={handlePrint} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-10 rounded-full shadow-lg transition-transform hover:-translate-y-1 flex items-center justify-center gap-2 mx-auto text-lg">🖨️ 產生 PDF / 列印報告</button>
+            <div className="bg-indigo-50 p-6 rounded-xl text-center print:hidden border border-indigo-100 mb-8">
+              <p className="text-indigo-800 font-bold mb-2 text-xl">Great Job! 恭喜完成所有任務！</p>
+              <p className="text-sm text-indigo-600">請將此頁面列印成 PDF 或截圖，並上傳至 Google Classroom 繳交。</p>
             </div>
           )}
+
+          {/* 獨立出列印按鈕，讓未完成的進度也能隨時列印 */}
+          <div className="text-center print:hidden">
+            <button onClick={handlePrint} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-10 rounded-full shadow-lg transition-transform hover:-translate-y-1 flex items-center justify-center gap-2 mx-auto text-lg">🖨️ 產生 PDF / 列印目前進度報告</button>
+          </div>
         </div>
       );
     }

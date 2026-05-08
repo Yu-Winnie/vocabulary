@@ -928,6 +928,28 @@
             <h2 className="text-2xl font-bold text-cyan-700">T4. 文法小學堂</h2>
             <span className="bg-cyan-100 text-cyan-800 px-4 py-1 rounded-full text-sm font-bold shadow-sm">觀念編號：{currentIndex + 1} / {conceptList.length}</span>
           </div>
+
+          {/* 新增：觀念選擇選單 */}
+          <div className="mb-6 bg-cyan-50 p-4 rounded-xl border border-cyan-100">
+            <p className="text-cyan-800 font-bold mb-3 text-sm flex items-center gap-2">
+              <span>🎯</span> 選擇你想學習的觀念：
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {conceptList.map((c, idx) => (
+                <button
+                  key={c.id}
+                  onClick={() => setCurrentIndex(idx)}
+                  className={`px-4 py-2 rounded-lg font-bold text-sm transition-all shadow-sm ${
+                    currentIndex === idx 
+                      ? 'bg-cyan-500 text-white ring-2 ring-cyan-300' 
+                      : 'bg-white border border-slate-200 text-slate-600 hover:border-cyan-400 hover:text-cyan-700'
+                  }`}
+                >
+                  觀念 {idx + 1}：{c.title}
+                </button>
+              ))}
+            </div>
+          </div>
           
           <div className="text-center mb-8 bg-slate-50 py-10 px-4 rounded-2xl border border-slate-200 shadow-inner min-h-[300px] flex flex-col justify-center items-center relative">
             

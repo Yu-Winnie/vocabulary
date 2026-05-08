@@ -439,7 +439,8 @@
           setInputText(list.map(c => `${c.title} | ${c.content}${c.image ? ' | '+c.image : ''}${c.audio ? ' | '+c.audio : ''}`).join('\n\n'));
         } else {
           const list = allGrammarData[editVersion]?.[editBook]?.[editUnit] || [];
-          setInputText(list.map(g => `${g.question} | ${g.options.join(',')} | ${g.answer} | ${g.explanation || ''}`).join('\n'));
+          // 改變分隔符為 / 來顯示現有選項
+          setInputText(list.map(g => `${g.question} | ${g.options.join(' / ')} | ${g.answer} | ${g.explanation || ''}`).join('\n'));
         }
         setError("");
       }, [editType, editVersion, editBook, editUnit, allVocabData, allGrammarConceptsData, allGrammarData]);
@@ -486,9 +487,10 @@
               newList.push({ id: idCount++, category, word: parts[wordIdx], meaning: parts[wordIdx+1], image: parts[wordIdx+2]||"", audio: parts[wordIdx+3]||"" });
             } else {
               // 文法測驗
-              if (parts.length < 3) { setError(`第 ${i + 1} 行文法格式錯誤，需包含: 題目 | 選項A,B,C | 答案`); return null; }
-              const options = parts[1].split(',').map(s => s.trim()).filter(s => s);
-              if (options.length < 2) { setError(`第 ${i + 1} 行選項錯誤，請用逗號區隔選項 (至少兩個)`); return null; }
+              if (parts.length < 3) { setError(`第 ${i + 1} 行文法格式錯誤，需包含: 題目 | 選項A / 選項B / 選項C | 答案`); return null; }
+              // 將原本使用逗號分切改為使用斜線 (/) 來分切選項
+              const options = parts[1].split('/').map(s => s.trim()).filter(s => s);
+              if (options.length < 2) { setError(`第 ${i + 1} 行選項錯誤，請用斜線 (/) 區隔選項 (至少兩個)`); return null; }
               const answer = parts[2];
               if (!options.includes(answer)) { setError(`第 ${i + 1} 行的答案 '${answer}' 必須存在於選項中`); return null; }
               newList.push({ id: idCount++, question: parts[0], options, answer, explanation: parts[3] || "" });
@@ -540,7 +542,7 @@
           <div className={`text-sm p-4 rounded border mb-4 ${editType === 'vocab' ? 'bg-indigo-50 border-indigo-100 text-slate-600' : editType === 'grammar_concept' ? 'bg-cyan-50 border-cyan-100 text-slate-600' : 'bg-emerald-50 border-emerald-100 text-slate-600'}`}>
             {editType === 'vocab' && (<><p className="font-bold text-indigo-700 mb-2">【單字模式】格式支援：</p><strong>[類別(選填)] | 英文單字 | 中文意思 | 圖片網址 (選填)</strong><br/><br/>範例：<span className="font-mono bg-white px-1 border rounded text-slate-500">主題單字 | apple | 蘋果</span></>)}
             {editType === 'grammar_concept' && (<><p className="font-bold text-cyan-700 mb-2">【文法觀念】寬鬆格式，支援多行說明與圖片：</p><strong>標題 | 說明內容(可換行) | 圖片網址(選填) | 音檔網址(選填)</strong><br/><br/>💡 <span className="text-cyan-600">不同觀念之間請用「空一行 (Enter兩次)」來區隔。</span><br/>範例：<span className="font-mono bg-white px-1 border rounded text-slate-500">Be動詞 | 主詞是I時搭配am... | https://img.url</span></>)}
-            {editType === 'grammar_quiz' && (<><p className="font-bold text-emerald-700 mb-2">【文法題目】選擇題格式：</p><strong>題目 | 選項1,選項2,選項3 | 正確答案 | 解析(選填)</strong><br/><br/>範例：<span className="font-mono bg-white px-1 border rounded text-slate-500">He ___ a boy. | is,am,are | is | 主詞為He，搭配is</span></>)}
+            {editType === 'grammar_quiz' && (<><p className="font-bold text-emerald-700 mb-2">【文法題目】選擇題格式：</p><strong>題目 | 選項1 / 選項2 / 選項3 | 正確答案 | 解析(選填)</strong><br/><br/>範例：<span className="font-mono bg-white px-1 border rounded text-slate-500">He ___ a boy. | is / am / are | is | 主詞為He，搭配is</span></>)}
           </div>
           
           <textarea className={`w-full h-64 p-4 border-2 rounded-lg focus:outline-none font-mono text-sm mb-2 whitespace-pre overflow-x-auto ${editType === 'vocab' ? 'border-slate-300 focus:border-indigo-500' : editType === 'grammar_concept' ? 'border-slate-300 focus:border-cyan-500' : 'border-slate-300 focus:border-emerald-500'}`} value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="請依照上方格式輸入..."></textarea>
